@@ -271,6 +271,101 @@ type FeederInfo struct {
 	EndBlock       int64
 	LastPrice      localPrice
 	LastSent       signInfo
+	// TwoPhases      bool
+}
+
+// AddRawData add rawData for 2nd phase price submission, this method will/should not be called concurrently with FinalizeRawData or GetRawDataPiece
+// func (f *feeder) AddRawData(roundID uint64, mt *oracletypes.MerkleTree) {
+func (f *feeder) AddRawData(roundID uint64, rd []byte, pieceSize uint32) bool {
+	if f.twoPhasesInfo == nil {
+		return false
+	}
+	mt, err := oracletypes.DeriveMT(pieceSize, rd)
+	if err != nil {
+		return false
+	}
+	return f.twoPhasesInfo.addMT(roundID, mt)
+}
+
+// FinalizeRawData finalize the raw data for 2nd phase price submission, this method will/should not be called concurrently with AddRawData or GetRawDataPiece
+func (f *feeder) FinalizeRawData(roundID uint64, rootHash []byte) bool {
+	if f.twoPhasesInfo == nil {
+		return false
+	}
+	return f.twoPhasesInfo.finalizeRawData(roundID, rootHash)
+}
+
+// GetRawDataPiece return the raw data piece for 2nd phase price submission, this method will/should not be called concurrently with AddRawData or FinalizeRawData
+func (f *feeder) GetRawDataPieceAndProof(roundID uint64, index uint32) (*PieceWithProof, error) {
+	if f.twoPhasesInfo == nil {
+		return nil, errors.New("two phases not enabled for this feeder")
+	}
+	return f.twoPhasesInfo.getRawDataPieceAndProof(roundID, index)
+}
+
+func (f *feeder) GetLatestRootHash() ([]byte, uint32) {
+	return f.twoPhasesInfo.getLatestRootHash()
+}
+
+func (f *feeder) SetRoundID(roundID uint64) bool {
+	if f.twoPhasesInfo == nil {
+		return false
+	}
+	return f.twoPhasesInfo.setRoundID(roundID)
+}
+
+func (f *feeder) IsTwoPhases() bool {
+	return f.twoPhasesInfo != nil
+}
+
+func (f *feeder) PriceChanged(p *fetchertypes.PriceInfo) bool {
+	if f.twoPhasesInfo != nil {
+		root := base64.StdEncoding.EncodeToString([]byte(p.Price))
+		return root != f.lastPrice.price.Price
+	}
+
+	return f.lastPrice.price.Price != p.Price
+}
+
+func (f *feeder) NextSendablePieceWithProofs(roundID uint64) []*PieceWithProof {
+	if f.twoPhasesInfo == nil || f.twoPhasesInfo.roundID != roundID || f.twoPhasesInfo.finalizedTree == nil {
+		return nil
+	}
+	ret := make([]*PieceWithProof, 0, 1)
+	// send one more for mempool to pre-cache
+	if f.twoPhasesInfo.nextPieceIndex == 0 {
+		if f.twoPhasesInfo.sentLatestPieceIndex == -1 {
+			pwf, err := f.twoPhasesInfo.getRawDataPieceAndProof(roundID, 0)
+			if err != nil {
+				return nil
+			}
+			ret = append(ret, pwf)
+		}
+		if f.twoPhasesInfo.sentLatestPieceIndex <= 0 {
+			pwf, err := f.twoPhasesInfo.getRawDataPieceAndProof(roundID, 1)
+			if err != nil {
+				return nil
+			}
+			ret = append(ret, pwf)
+		}
+	}
+	if int64(f.twoPhasesInfo.nextPieceIndex) > f.twoPhasesInfo.sentLatestPieceIndex {
+		pwf, err := f.twoPhasesInfo.getRawDataPieceAndProof(roundID, f.twoPhasesInfo.nextPieceIndex)
+		if err != nil {
+			return nil
+		}
+		ret = append(ret, pwf)
+	}
+	return ret
+}
+
+func (f *feeder) UpdateSentLatestPieceIndex(roundID uint64, index int64) int64 {
+	if f.twoPhasesInfo.roundID != roundID {
+		return -1
+	}
+	old := f.twoPhasesInfo.sentLatestPieceIndex
+	f.twoPhasesInfo.sentLatestPieceIndex = index
+	return old
 }
 
 // AddRawData add rawData for 2nd phase price submission, this method will/should not be called concurrently with FinalizeRawData or GetRawDataPiece
@@ -612,7 +707,6 @@ func (f *feeder) start() {
 					f.logger.Debug("feeder not active", "feederID", f.feederID, "startBaseBlock", f.startBaseBlock, "current height", h.commitHeight)
 					continue
 				}
-
 				if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {
 					f.logger.Info("triggered 2nd-phase rawData piece message transaction sending", "current height", h.commitHeight, "price height", h.priceHeight, "sent_count", len(sentIndexes), "indexes", sentIndexes)
 					continue
@@ -622,7 +716,6 @@ func (f *feeder) start() {
 				if delta < 3 {
 					f.logger.Info("trigger feeder", "height_commit", h.commitHeight, "height_price", h.priceHeight)
 					f.SetRoundID(roundID)
-
 					if price, err := f.fetcher.GetLatestPrice(f.source, f.token); err != nil {
 						f.logger.Error("failed to get latest price", "roundID", roundID, "delta", delta, "feeder", f.Info(), "error", err)
 						if errors.Is(err, feedertypes.ErrSourceTokenNotConfigured) {
@@ -652,6 +745,14 @@ func (f *feeder) start() {
 							f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
 							continue
 						}
+						if !f.PriceChanged(&price) {
+							f.logger.Info("didn't submit price due to price not changed", "roundID", roundID, "delta", delta, "price", price)
+							f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
+							continue
+
+						}
+						// the result of AddRawData does not matter, it's only needed when processing 2nd-phase submission
+						f.AddRawData(uint64(roundID), []byte(price.Price), f.twoPhasesPieceSize)
 						if nonce := f.lastSent.getNextNonceAndUpdate(roundID); nonce < 0 {
 							f.logger.Error("failed to submit due to no available nonce", "roundID", roundID, "delta", delta, "feeder", f.Info())
 						} else {
@@ -684,6 +785,32 @@ func (f *feeder) start() {
 								f.logger.Error("failed to send tx submitting price", "price", price, "nonce", nonce, "baseBlock", baseBlock, "delta", delta, "feeder", f.Info(), "response_rawlog", txResponse.RawLog)
 							}
 						}
+					}
+				}
+				// handle 2-phase submission
+				pwfs := f.NextSendablePieceWithProofs(uint64(roundID))
+				if len(pwfs) == 0 {
+					f.logger.Info("no piece to submit for 2nd-phase price submission", "roundID", roundID, "delta", delta, "feeder", f.Info(), "height_commit", h.commitHeight, "height_price", h.priceHeight)
+					continue
+				}
+				pInfos := make([]*fetchertypes.PriceInfo, 0, len(pwfs))
+				for _, pwf := range pwfs {
+					pInfos = append(pInfos, &fetchertypes.PriceInfo{
+						Price:   pwf.Piece,
+						RoundID: fmt.Sprintf("%d", pwf.PieceIndex),
+					})
+					if len(pwf.IndexesStr) > 0 && len(pwf.HashesStr) > 0 {
+						pInfos = append(pInfos, &fetchertypes.PriceInfo{
+							Price:   pwf.HashesStr,
+							RoundID: pwf.IndexesStr,
+						})
+					}
+					oldIndex := f.UpdateSentLatestPieceIndex(uint64(roundID), int64(pwf.PieceIndex))
+					_, err := f.submitter.SendTx2Phases(uint64(f.feederID), uint64(baseBlock), pInfos, oracletypes.AggregationPhaseTwo, 1)
+					if err != nil {
+						f.logger.Error("failed to send tx for 2nd-phase price submission", "roundID", roundID, "delta", delta, "feeder", f.Info(), "height_commit", h.commitHeight, "height_price", h.priceHeight, "error", err)
+						// revert local index if failed to submit
+						f.UpdateSentLatestPieceIndex(uint64(roundID), oldIndex)
 					}
 				}
 			case price := <-f.priceCh:
