@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/imua-xyz/price-feeder/fetcher/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
@@ -36,6 +37,7 @@ type source struct {
 	logger  feedertypes.LoggerInf
 	stakers *fetchertypes.Stakers
 	*types.Source
+	ethClient *ethclient.Client
 }
 
 type config struct {
@@ -126,9 +128,10 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 	// init first to get a fixed pointer for 'fetch' to refer to
 	defaultSource = &source{}
 	*defaultSource = source{
-		logger:  logger,
-		Source:  types.NewSource(logger, types.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
-		stakers: types.NewStakers(),
+		logger:    logger,
+		Source:    types.NewSource(logger, types.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
+		stakers:   types.NewStakers(),
+		ethClient: nil,
 	}
 
 	// update nst assetID to be consistent with imuad. for beaconchain it's about different lzID
