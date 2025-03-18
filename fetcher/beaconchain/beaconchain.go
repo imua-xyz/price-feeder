@@ -8,14 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/imroc/biu"
-	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	"github.com/imua-xyz/price-feeder/fetcher/types"
-	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
 type ResultValidators struct {
@@ -64,11 +61,12 @@ var (
 	//
 	//	stakerValidators = map[int]*validatorList{2: {0, validatorsTmp}}
 	// stakerValidators  = make(map[int]*validatorList)
-	defaultStakerValidators = newStakerVList()
+	//	defaultStakerValidators = newStakerVList()
+	//	defaultStakers          = newStakers()
 
 	// latest finalized epoch we've got balances summarized for stakers
 	finalizedEpoch   uint64
-	finalizedVersion int64
+	finalizedVersion uint64
 
 	// latest stakerBalanceChanges, initialized as 0 change (256-0 of 1st parts means that all stakers have 32 efb)
 	//	latestChangesBytes = make([]byte, 32)
@@ -77,98 +75,6 @@ var (
 	urlEndpoint   *url.URL
 	slotsPerEpoch uint64
 )
-
-func ResetStakerValidators(stakerInfos []*oracletypes.StakerInfo, version int64, all bool) error {
-	return defaultStakerValidators.reset(stakerInfos, version, all)
-}
-
-func UpdateStakerValidators(add, remove map[int64][]string, startVersion, endVersion int64) error {
-	return defaultStakerValidators.update(add, remove, startVersion, endVersion)
-}
-
-func (s *source) fetch(token string) (*types.PriceInfo, error) {
-	// check epoch, when epoch updated, update effective-balance
-	if types.NSTToken(token) != types.NativeTokenETH {
-		return nil, feedertypes.ErrTokenNotSupported.Wrap(fmt.Sprintf("only support native-eth-restaking %s, got:%s", types.NativeTokenETH, token))
-	}
-
-	stakerValidators, version := defaultStakerValidators.getStakerValidators()
-	if len(stakerValidators) == 0 {
-		// return zero price when there's no stakers
-		return &types.PriceInfo{}, nil
-	}
-
-	// check if finalized epoch had been updated
-	epoch, stateRoot, err := getFinalizedEpoch()
-	if err != nil {
-		return nil, fmt.Errorf("fail to get finalized epoch from beaconchain, error:%w", err)
-	}
-
-	// epoch not updated, just return without fetching since effective-balance has not changed
-	if epoch <= finalizedEpoch && version <= finalizedVersion {
-		return &types.PriceInfo{
-			Price: string(latestChangesBytes),
-			// combine epoch and version as roundID in priceInfo
-			RoundID: fmt.Sprintf("%s_%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatInt(version, 10)),
-		}, nil
-	}
-
-	stakerChanges := make([][]int, 0, len(stakerValidators))
-	s.logger.Info("fetch efb from beaconchain", "stakerList_length", len(stakerValidators))
-	hasEFBChanged := false
-	for stakerIdx, validators := range stakerValidators {
-		stakerBalance := 0
-		// beaconcha.in support at most 100 validators for one request
-		l := len(validators)
-		i := 0
-		for l > 100 {
-			tmpValidatorPubkeys := validators[i : i+100]
-			i += 100
-			l -= 100
-			validatorBalances, err := getValidators(tmpValidatorPubkeys, stateRoot)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get validators from beaconchain, error:%w", err)
-			}
-			for _, validatorBalance := range validatorBalances {
-				stakerBalance += int(validatorBalance[1])
-			}
-		}
-
-		validatorBalances, err := getValidators(validators[i:], stateRoot)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get validators from beaconchain, error:%w", err)
-		}
-		for _, validatorBalance := range validatorBalances {
-			// this should be initialized from imuad
-			stakerBalance += int(validatorBalance[1])
-		}
-		if delta := stakerBalance - defaultBalance*l; delta != 0 {
-			if delta < maxChange*l {
-				delta = maxChange * l
-			}
-			// #nosec G155  -- safe conversion, stakerIdx has been verified to be less than 256
-			stakerChanges = append(stakerChanges, []int{int(stakerIdx), delta})
-			s.logger.Info("fetched efb from beaconchain", "staker_index", stakerIdx, "balance_change", delta, "validators_count", l)
-			hasEFBChanged = true
-		}
-	}
-	if !hasEFBChanged && len(stakerValidators) > 0 {
-		s.logger.Info("fetch efb from beaconchain, all efbs of validators remains to 32 without any change")
-	}
-	sort.Slice(stakerChanges, func(i, j int) bool {
-		return stakerChanges[i][0] < stakerChanges[j][0]
-	})
-
-	finalizedEpoch = epoch
-	finalizedVersion = version
-
-	latestChangesBytes = convertBalanceChangeToBytes(stakerChanges)
-
-	return &types.PriceInfo{
-		Price:   string(latestChangesBytes),
-		RoundID: fmt.Sprintf("%s_%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatInt(version, 10)),
-	}, nil
-}
 
 // reload does nothing since beaconchain source only used to update the balance change for nsteth
 func (s *source) reload(token, cfgPath string) error {

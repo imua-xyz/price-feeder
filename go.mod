@@ -20,6 +20,7 @@ require (
 )
 
 require (
+	github.com/cosmos/gogoproto v1.4.11
 	go.uber.org/zap v1.27.0
 	google.golang.org/protobuf v1.33.0
 )
@@ -63,7 +64,6 @@ require (
 	github.com/cosmos/btcutil v1.0.5 // indirect
 	github.com/cosmos/cosmos-proto v1.0.0-beta.3 // indirect
 	github.com/cosmos/gogogateway v1.2.0 // indirect
-	github.com/cosmos/gogoproto v1.4.11 // indirect
 	github.com/cosmos/iavl v0.21.0-alpha.1.0.20230904092046-df3db2d96583 // indirect
 	github.com/cosmos/ibc-go/v7 v7.4.0 // indirect
 	github.com/cosmos/ics23/go v0.10.0 // indirect
@@ -255,7 +255,8 @@ replace (
 	// Security Advisory https://github.com/advisories/GHSA-h395-qcrw-5vmq
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.9.1
 
-	github.com/imua-xyz/imuachain v0.0.0-20250221095538-9f51483a7966 => github.com/leonz789/exocore v0.0.0-20250307025632-f7a3e0deb73a
+	// github.com/imua-xyz/imuachain v0.0.0-20250221095538-9f51483a7966 => github.com/leonz789/exocore v0.0.0-20250307025632-f7a3e0deb73a
+	github.com/imua-xyz/imuachain v0.0.0-20250221095538-9f51483a7966 => /Users/linqing/workplace/github.com/leonz/imua-xyz/imuachain
 	// replace broken goleveldb
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	//fix cosmos-sdk error
