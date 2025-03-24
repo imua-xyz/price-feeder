@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/imua-xyz/price-feeder/fetcher/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
@@ -151,28 +149,4 @@ func parseConfig(confPath string) (config, error) {
 		return config{}, err
 	}
 	return cfg, nil
-}
-
-func convertHexToIntStr(hexStr string) (string, error) {
-	vBytes, err := hexutil.Decode(hexStr)
-	if err != nil {
-		return "", err
-	}
-	return new(big.Int).SetBytes(vBytes).String(), nil
-
-}
-
-func ConvertHexToIntStrForMap(in map[int64][]string) (map[int64][]string, error) {
-	ret := make(map[int64][]string)
-	var err error
-	for k, v := range in {
-		ret[k] = make([]string, len(v))
-		for i, val := range v {
-			ret[k][i], err = convertHexToIntStr(val)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	return ret, nil
 }

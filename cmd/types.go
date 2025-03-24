@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/cosmos/gogoproto/proto"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
+	imuaclienttypes "github.com/imua-xyz/price-feeder/imuaclient"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 
 	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
@@ -29,7 +31,7 @@ type PriceFetcher interface {
 
 type PriceFetcherNST interface {
 	PriceFetcher
-	SetNSTStakerInfos(sourceName string, sInfos fetchertypes.StakerInfos, version uint64)
+	SetNSTStakers(sourceName string, sInfos fetchertypes.StakerInfos, version uint64)
 }
 
 type priceSubmitter interface {
@@ -96,6 +98,7 @@ type twoPhasesInfo struct {
 	sentLatestPieceIndex int64
 	// this is synced with onchain information from events
 	nextPieceIndex uint32
+	seenIndex      map[uint32]struct{}
 }
 
 type PieceWithProof struct {
@@ -103,6 +106,13 @@ type PieceWithProof struct {
 	PieceIndex uint32
 	IndexesStr string
 	HashesStr  string
+}
+
+func newTwoPhasesInfo() *twoPhasesInfo {
+	return &twoPhasesInfo{
+		sentLatestPieceIndex: -1,
+		seenIndex:            make(map[uint32]struct{}),
+	}
 }
 
 func (t *twoPhasesInfo) addMT(roundID uint64, mt *oracletypes.MerkleTree) bool {
@@ -132,6 +142,14 @@ func (t *twoPhasesInfo) addMT(roundID uint64, mt *oracletypes.MerkleTree) bool {
 	return true
 }
 
+func (t *twoPhasesInfo) finalizedRawDataByRootHash(rootHash []byte) []byte {
+	if t.finalizedTree != nil && bytes.Equal(t.finalizedTree.RootHash(), rootHash) {
+		rawData, _ := t.finalizedTree.CompleteRawData()
+		return rawData
+	}
+	return nil
+}
+
 func (t *twoPhasesInfo) finalizeRawData(roundID uint64, rootHash []byte) bool {
 	if roundID != t.roundID {
 		return false
@@ -141,16 +159,23 @@ func (t *twoPhasesInfo) finalizeRawData(roundID uint64, rootHash []byte) bool {
 	}
 	for _, mt := range t.cachedTree {
 		if bytes.Equal(mt.RootHash(), rootHash) {
+			t.resetFinalize()
 			t.finalizedTree = mt
 			t.cachedTree = nil
-			t.sentLatestPieceIndex = -1
-			t.nextPieceIndex = 0
 			return true
 		}
 	}
 	// make sure finalizedRawdata is nil if no match found, it's better to be count as miss than 'malicious' for a validator
-	t.finalizedTree = nil
+	t.resetFinalize()
 	return false
+}
+
+// resetFinalize reset the finalizedTree and related fields
+func (t *twoPhasesInfo) resetFinalize() {
+	t.finalizedTree = nil
+	t.sentLatestPieceIndex = -1
+	t.nextPieceIndex = 0
+	t.seenIndex = make(map[uint32]struct{})
 }
 
 // GetRawDataPiece return the raw data piece for 2nd phase price submission
@@ -182,9 +207,7 @@ func (t *twoPhasesInfo) setRoundID(roundID uint64) bool {
 	if roundID > t.roundID {
 		t.roundID = roundID
 		t.cachedTree = nil
-		t.finalizedTree = nil
-		t.sentLatestPieceIndex = -1
-		t.nextPieceIndex = 0
+		t.resetFinalize()
 		return true
 	}
 	return false
@@ -207,18 +230,18 @@ type feeder struct {
 
 	roundID uint64
 
-	//	maxNonce int32
-
 	fetcher    PriceFetcher
 	fetcherNST PriceFetcherNST
 	submitter  priceSubmitter
 	lastPrice  *localPrice
 	lastSent   *signInfo
 
-	priceCh            chan *updatePrice
-	heightsCh          chan *triggerHeights
-	paramsCh           chan *updateParamsReq
-	updateNSTStakersCh chan *updateNSTStaker
+	priceCh      chan *updatePrice
+	heightsCh    chan *triggerHeights
+	paramsCh     chan *updateParamsReq
+	nstStakersCh chan *updateNSTStakerReq
+	nstPieceCh   chan *updateNSTPieceReq
+	nstBalanceCh chan *updateNSTBalanceReq
 
 	twoPhasesInfo      *twoPhasesInfo
 	twoPhasesPieceSize uint32
@@ -248,7 +271,6 @@ func (f *feeder) AddRawData(roundID uint64, rd []byte, pieceSize uint32) (bool, 
 	if err != nil {
 		return false, nil
 	}
-	fmt.Println("debug(leonz)--->AddRawData.1. size, LCount", pieceSize, mt.LeafCount())
 	added := f.twoPhasesInfo.addMT(roundID, mt)
 	return added, mt.RootHash()
 }
@@ -289,9 +311,7 @@ func (f *feeder) priceChanged(p *fetchertypes.PriceInfo) bool {
 }
 
 func (f *feeder) NextSendablePieceWithProofs(roundID uint64) ([]*PieceWithProof, error) {
-	fmt.Println("debug(leonz)--NextSendablePieceWithProofs.1")
 	if f.twoPhasesInfo == nil {
-		fmt.Println("debug(leonz)--NextSendablePieceWithProofs.2")
 		return nil, errors.New("two phases not enabled for this feeder")
 	}
 	if f.twoPhasesInfo.roundID != roundID {
@@ -307,7 +327,6 @@ func (f *feeder) NextSendablePieceWithProofs(roundID uint64) ([]*PieceWithProof,
 	if int64(f.twoPhasesInfo.nextPieceIndex) > f.twoPhasesInfo.sentLatestPieceIndex {
 		pwf, err := f.twoPhasesInfo.getRawDataPieceAndProof(roundID, f.twoPhasesInfo.nextPieceIndex)
 		if err != nil {
-			fmt.Println("debug(leonz)--NextSendablePieceWithProofs.5", err)
 			return nil, err
 		}
 		ret = append(ret, pwf)
@@ -321,10 +340,60 @@ func (f *feeder) NextSendablePieceWithProofs(roundID uint64) ([]*PieceWithProof,
 		}
 	}
 
-	fmt.Println("debug(leonz)--NextSendablePieceWithProofs.6")
 	return ret, nil
 }
 
+// updateNSTPieceIndex update the next piece index to be sent for 2nd phase price submission
+func (f *feeder) updateNSTPieceIndex(index uint32) error {
+	if f.twoPhasesInfo == nil {
+		return errors.New("two phases not enabled for this feeder")
+	}
+	if f.twoPhasesInfo.finalizedTree == nil {
+		return errors.New("no finalized raw data found for this round")
+	}
+	if f.twoPhasesInfo.nextPieceIndex >= f.twoPhasesInfo.finalizedTree.LeafCount()-1 {
+		return fmt.Errorf("next piece index is at the end of the tree, index:%d, leafCount:%d", f.twoPhasesInfo.nextPieceIndex, f.twoPhasesInfo.finalizedTree.LeafCount())
+	}
+	if _, ok := f.twoPhasesInfo.seenIndex[index]; ok {
+		return fmt.Errorf("index already seen, index:%d", index)
+	}
+	if index <= f.twoPhasesInfo.nextPieceIndex {
+		f.twoPhasesInfo.nextPieceIndex++
+		f.twoPhasesInfo.seenIndex[index] = struct{}{}
+	} else if index < f.twoPhasesInfo.finalizedTree.LeafCount()-1 {
+		f.twoPhasesInfo.nextPieceIndex = index + 1
+		f.twoPhasesInfo.seenIndex[index] = struct{}{}
+	}
+	return nil
+}
+
+// applyNSTBalanceUpdate apply the balance changes for 2nd phase price submission
+// it will update the stakers and related source information by invoking fetcherNST
+// it finds the finalized raw data by rootHash from finalizedTree and apply the balance changes, and will return error if no finalized raw data found
+// this is used to sync the balance changes from imuachain to the feeder
+func (f *feeder) applyNSTBalanceUpdate(rootHash []byte) error {
+	if f.twoPhasesInfo == nil {
+		return errors.New("two phases not enabled for this feeder")
+	}
+	rawData := f.twoPhasesInfo.finalizedRawDataByRootHash(rootHash)
+	if rawData == nil {
+		return errors.New("no finalized raw data found for this rootHash")
+	}
+
+	changes := &oracletypes.RawDataNST{}
+	if err := proto.Unmarshal(rawData, changes); err != nil {
+		return err
+	}
+	if err := f.stakers.ApplyBalanceChanges(changes); err != nil {
+		return err
+	}
+	sInfos, _ := f.stakers.GetStakerInfos()
+	f.fetcherNST.SetNSTStakers(f.source, sInfos, changes.Version+1)
+	return nil
+}
+
+// UpdateSentLatestPieceIndex update the sentLatestPieceIndex for 2nd phase price submission
+// it will return the old index if the roundID matches, otherwise return -1
 func (f *feeder) UpdateSentLatestPieceIndex(roundID uint64, index int64) int64 {
 	if f.twoPhasesInfo.roundID != roundID {
 		return -1
@@ -334,14 +403,55 @@ func (f *feeder) UpdateSentLatestPieceIndex(roundID uint64, index int64) int64 {
 	return old
 }
 
-func (f *feeder) updateNSTStakers(sInfo *updateNSTStaker) {
+// updateNSTStakers update the stakers for 2nd phase price submission
+// it is used to sync the stakers information from imuachain to the feeder when depoisit/withdrwal nst happens
+func (f *feeder) updateNSTStakers(sInfo []*imuaclienttypes.EventNSTStaker) error {
+	errCh := make(chan error)
 	select {
-	case f.updateNSTStakersCh <- sInfo:
+	case f.nstStakersCh <- &updateNSTStakerReq{
+		info: sInfo,
+		res:  errCh,
+	}:
+		return <-errCh
 		// don't block
 	default:
 	}
+	return nil
 }
 
+// updateNSTBalances update the balances for 2nd phase price submission
+// it is used to sync the balance changes from imuachain to the feeder when any balance of stakers changed
+func (f *feeder) updateNSTBalance(balanceInfo *imuaclienttypes.EventNSTBalance) error {
+	errCh := make(chan error)
+	select {
+	case f.nstBalanceCh <- &updateNSTBalanceReq{
+		info: balanceInfo,
+		res:  errCh,
+	}:
+		return <-errCh
+		// don't block
+	default:
+	}
+	return nil
+}
+
+// updateNSTPiece update the piece index for 2nd phase price submission
+// it is used to sync the piece index from imuachain to the feeder when the piece index is updated which means the piece is finalized/processed by imuachain
+func (f *feeder) updateNSTPiece(pieceIndex uint32) error {
+	errCh := make(chan error)
+	select {
+	case f.nstPieceCh <- &updateNSTPieceReq{
+		pieceIndex: pieceIndex,
+		res:        errCh,
+	}:
+		return <-errCh
+		// don't block
+	default:
+	}
+	return nil
+}
+
+// Info return the feeder's information, it's used for logging by export all the information of the feeder
 func (f *feeder) Info() FeederInfo {
 	var lastPrice localPrice
 	var lastSent signInfo
@@ -365,6 +475,7 @@ func (f *feeder) Info() FeederInfo {
 	}
 }
 
+// neFeeder create a new feeder with the given parameters
 func newFeeder(tf *oracletypes.TokenFeeder, feederID int, fetcher PriceFetcher, submitter priceSubmitter, source string, token string, maxNonce int32, pieceSize uint32, isTwoPhases bool, logger feedertypes.LoggerInf) (*feeder, error) {
 	ret := feeder{
 		logger:   logger,
@@ -394,9 +505,12 @@ func newFeeder(tf *oracletypes.TokenFeeder, feederID int, fetcher PriceFetcher, 
 		if !ok {
 			return nil, errors.New("failed to cast fetcher to PriceFetcherNST")
 		}
-		ret.twoPhasesInfo = &twoPhasesInfo{}
+
+		ret.twoPhasesInfo = newTwoPhasesInfo()
 		ret.twoPhasesPieceSize = pieceSize
-		ret.updateNSTStakersCh = make(chan *updateNSTStaker, 1)
+		ret.nstStakersCh = make(chan *updateNSTStakerReq, 1)
+		ret.nstPieceCh = make(chan *updateNSTPieceReq, 1)
+		ret.nstBalanceCh = make(chan *updateNSTBalanceReq, 1)
 		ret.stakers = fetchertypes.NewStakers()
 		ret.fetcherNST = fNST
 	}
@@ -420,28 +534,27 @@ func (f *feeder) start() {
 				}
 				// there's a finilzedTree and pending pieces to submit
 				if pwfs, err := f.NextSendablePieceWithProofs(uint64(roundID)); err == nil {
-					fmt.Printf("debug(leonz)--->len(pwfs)=%d, roundID=%d, block:%d\r\n", len(pwfs), roundID, h.commitHeight)
 					for _, pwf := range pwfs {
-						fmt.Println("debug(leonz)--->constructing priceInfo:.....")
 						pInfos := make([]*fetchertypes.PriceInfo, 0, 2)
 						pInfos = append(pInfos, &fetchertypes.PriceInfo{
 							Price:   pwf.Piece,
 							RoundID: fmt.Sprintf("%d", pwf.PieceIndex),
 						})
-						fmt.Printf("debug(leonz)--->constructing.piece:....., piece:%s, pieceIndex:%d\r\n", pwf.Piece, pwf.PieceIndex)
 						if len(pwf.IndexesStr) > 0 && len(pwf.HashesStr) > 0 {
 							pInfos = append(pInfos, &fetchertypes.PriceInfo{
 								Price:   pwf.HashesStr,
 								RoundID: pwf.IndexesStr,
 							})
-							fmt.Printf("debug(leonz)--->constructing.proof:....., indexesStr:%s, indexesStr:%s\r\n", pwf.HashesStr, pwf.IndexesStr)
 						}
 						oldIndex := f.UpdateSentLatestPieceIndex(uint64(roundID), int64(pwf.PieceIndex))
-						_, err := f.submitter.SendTx2Phases(uint64(f.feederID), uint64(baseBlock), pInfos, oracletypes.AggregationPhaseTwo, 1)
-						if err != nil {
-							f.logger.Error("failed to send tx for 2nd-phase price submission", "roundID", roundID, "delta", delta, "feeder", f.Info(), "height_commit", h.commitHeight, "height_price", h.priceHeight, "error", err)
+						res, err := f.submitter.SendTx2Phases(uint64(f.feederID), uint64(baseBlock), pInfos, oracletypes.AggregationPhaseTwo, 1)
+						if err != nil || res.GetTxResponse().Code != statusOk {
+							f.logger.Error("failed to send tx for 2nd-phase price submission", "roundID", roundID, "delta", delta, "feeder", f.Info(), "height_commit", h.commitHeight, "height_price", h.priceHeight, "error", err, "res.RawLog", res.GetTxResponse().RawLog)
 							// revert local index if failed to submit
 							f.UpdateSentLatestPieceIndex(uint64(roundID), oldIndex)
+							// piece index is not updated, so break the loop
+							// TODO: ? should we break the loop here? or just try over following pieces
+							break
 						} else {
 							f.logger.Info("sent tx to submit price with rawData piece for 2nd phase", "pieceIndex", pwf.PieceIndex, "baseBlock", baseBlock, "delta", delta, "roundID", roundID)
 						}
@@ -451,8 +564,6 @@ func (f *feeder) start() {
 				} else if f.IsTwoPhases() {
 					f.logger.Info("didn't able to get next sendable piece with proofs for 2nd-phase price submission", "roundID", roundID, "error", err)
 				}
-
-				fmt.Printf("debug(leonz))--no 2ndPhase tx, feederID:%d, roundID:%d, block:%d\r\n", f.feederID, roundID, h.commitHeight)
 
 				// TODO: replace 3 with MaxNonce
 				if delta < 3 {
@@ -476,11 +587,7 @@ func (f *feeder) start() {
 						}
 
 						if f.IsTwoPhases() {
-							debugRet, rootHash := f.AddRawData(uint64(roundID), []byte(price.Price), f.twoPhasesPieceSize)
-							fmt.Printf("debug(leonz)--->AddRawData.result:%t,feederID:%d,roundID:%d,block:%d,fetchedLatestRoot:%s,syncedLatestRoot:%s\r\n", debugRet, f.feederID, roundID, h.commitHeight, base64.StdEncoding.EncodeToString(rootHash), base64.StdEncoding.EncodeToString([]byte(f.lastPrice.price.Price)))
-							changes := oracletypes.RawDataNST{}
-							err := proto.Unmarshal([]byte(price.Price), &changes)
-							fmt.Println("debug(leonz)--->AddRawData.changes:", changes, err)
+							_, rootHash := f.AddRawData(uint64(roundID), []byte(price.Price), f.twoPhasesPieceSize)
 							if bytes.Equal(rootHash, []byte(f.lastPrice.price.Price)) {
 								f.logger.Info("didn't submit price for 1st-phase of 2phases due to price not changed", "roundID", roundID, "delta", delta, "price", price)
 								f.logger.Debug("got latsetprice(rootHash) equal to local cache", "feeder", f.Info())
@@ -497,11 +604,13 @@ func (f *feeder) start() {
 							var res *sdktx.BroadcastTxResponse
 							var err error
 							if f.IsTwoPhases() {
-								fmt.Printf("debug(leonz)--->phase 1 of 2phases feederID:%d, roundID:%d, block:%d\r\n", f.feederID, roundID, h.commitHeight)
 								if root, count := f.GetLatestRootHash(); count > 0 {
-									price.Price = string(root)
-									price.RoundID = fmt.Sprintf("%d", count)
-									f.logger.Info("phase 1 message of 2phases feeder", "rootHash", hex.EncodeToString(root), "piece_count", count)
+									countBytes := strconv.FormatUint(uint64(count), 10)
+									tmp := make([]byte, 0, len(root)+len(countBytes))
+									tmp = append(tmp, root...)
+									tmp = append(tmp, countBytes...)
+									price.Price = string(tmp)
+									f.logger.Info("phase 1 message of 2phases feeder", "rootHash", hex.EncodeToString(root), "piece_count", count, "roundID", price.RoundID)
 									res, err = f.submitter.SendTx2Phases(uint64(f.feederID), uint64(baseBlock), []*fetchertypes.PriceInfo{&price}, oracletypes.AggregationPhaseOne, nonce)
 								} else {
 									f.logger.Error("failed to submit 1st-phase price due to no available rootHash for 2-phases aggregation submission", "roundID", roundID, "delta", delta, "feeder", f.Info())
@@ -528,6 +637,7 @@ func (f *feeder) start() {
 				// update latest height that price had been updated
 				if f.IsTwoPhases() {
 					rootHash, err := base64.StdEncoding.DecodeString(price.price.Price)
+					rootHash = rootHash[:32]
 					if err != nil {
 						f.logger.Error("failed to update local price due to failed to parse rootHash from base64 price-string", "price", price.price, "error", err)
 						continue
@@ -548,12 +658,39 @@ func (f *feeder) start() {
 					f.logger.Error("failed to update params", "new params", req.params)
 				}
 				req.result <- &updateParamsRes{}
-			case req := <-f.updateNSTStakersCh:
-				if err := f.stakers.Update(req.add, req.remove, req.nextVersion, req.latestVersion); err != nil {
-					// TODO(leonz): return error for resetAll
+				// TODO: ? no need to take care of concurrency for these requests of nstStakers change with channel
+			case req := <-f.nstStakersCh:
+				add := req.info[0]
+				remove := req.info[1]
+				var nv, lv uint64
+				if add != nil {
+					nv, lv = add.Versions()
+					if remove != nil {
+						rNv, rLv := remove.Versions()
+						nv = min(nv, rNv)
+						lv = max(lv, rLv)
+					}
+				} else if remove != nil {
+					nv, lv = remove.Versions()
 				}
-				sInfos, version := f.stakers.GetStakerInfos()
-				f.fetcherNST.SetNSTStakerInfos(f.source, sInfos, version)
+
+				if err := f.stakers.Update(req.info[0].SInfos(), req.info[1].SInfos(), nv, lv); err != nil {
+					req.res <- err
+				} else {
+					req.res <- nil
+					sInfos, version := f.stakers.GetStakerInfos()
+					f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
+				}
+			case req := <-f.nstBalanceCh:
+				if err := f.applyNSTBalanceUpdate(req.info.RootHash()); err != nil {
+					req.res <- err
+				} else {
+					req.res <- nil
+					sInfos, version := f.stakers.GetStakerInfos()
+					f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
+				}
+			case req := <-f.nstPieceCh:
+				req.res <- f.updateNSTPieceIndex(req.pieceIndex)
 			}
 		}
 	}()
@@ -649,18 +786,35 @@ type failedFeedersWithError struct {
 	err      error
 }
 type updateNSTStakersReq struct {
-	infos []*updateNSTStaker
+	//	infos []*updateNSTStaker
+	infos imuaclienttypes.EventNSTStakers
 	res   chan []*failedFeedersWithError
 }
 
-type updateNSTStaker struct {
-	feederID                   uint64
-	add                        fetchertypes.StakerInfos
-	remove                     fetchertypes.StakerInfos
-	nextVersion, latestVersion uint64
+type updateNSTStakerReq struct {
+	info []*imuaclienttypes.EventNSTStaker
+	res  chan error
 }
 
-type updateNSTPieceIndexReq struct{}
+type updateNSTPiecesReq struct {
+	infos imuaclienttypes.EventNSTPieces
+	res   chan []*failedFeedersWithError
+}
+
+type updateNSTPieceReq struct {
+	pieceIndex uint32
+	res        chan error
+}
+
+type updateNSTBalancesReq struct {
+	infos imuaclienttypes.EventNSTBalances
+	res   chan []*failedFeedersWithError
+}
+
+type updateNSTBalanceReq struct {
+	info *imuaclienttypes.EventNSTBalance
+	res  chan error
+}
 
 type Feeders struct {
 	locker    *sync.Mutex
@@ -670,11 +824,12 @@ type Feeders struct {
 	logger    feedertypes.LoggerInf
 	feederMap map[int]*feeder
 	// TODO: feeder has sync management, so feeders could remove these channel
-	trigger            chan *triggerReq
-	updatePriceCh      chan *updatePricesReq
-	updateParamsCh     chan *oracletypes.Params
-	updateNSTStakersCh chan *updateNSTStakersReq
-	updateNSTPieces    chan *updateNSTPieceIndexReq
+	trigger             chan *triggerReq
+	updatePriceCh       chan *updatePricesReq
+	updateParamsCh      chan *oracletypes.Params
+	updateNSTStakersCh  chan *updateNSTStakersReq
+	updateNSTBalancesCh chan *updateNSTBalancesReq
+	updateNSTPiecesCh   chan *updateNSTPiecesReq
 }
 
 func NewFeeders(logger feedertypes.LoggerInf, fetcher PriceFetcher, submitter priceSubmitter) *Feeders {
@@ -693,7 +848,9 @@ func NewFeeders(logger feedertypes.LoggerInf, fetcher PriceFetcher, submitter pr
 		updateParamsCh: make(chan *oracletypes.Params, 1),
 
 		// this request will be recieved at most one per block, so the buffer 1 is enough
-		updateNSTStakersCh: make(chan *updateNSTStakersReq, 1),
+		updateNSTStakersCh:  make(chan *updateNSTStakersReq, 1),
+		updateNSTBalancesCh: make(chan *updateNSTBalancesReq, 1),
+		updateNSTPiecesCh:   make(chan *updateNSTPiecesReq, 1),
 	}
 
 }
@@ -702,12 +859,12 @@ func (fs *Feeders) SetupFeeder(tf *oracletypes.TokenFeeder, feederID int, source
 	fs.locker.Lock()
 	defer fs.locker.Unlock()
 	if fs.running {
-		fs.logger.Error("failed to setup feeder for a running feeders, this should be called before feeders is started")
+		fs.logger.Error("failed to setup feeder for a running feeders, this should be called before feeders is started", "feederID", feederID)
 		return
 	}
 	f, err := newFeeder(tf, feederID, fs.fetcher, fs.submitter, source, token, maxNonce, pieceSize, isTwoPhases, fs.logger.With("feeder", fmt.Sprintf(loggerTagPrefix, token, feederID)))
 	if err != nil {
-		fs.logger.Error("failed to create feeder", "error", err)
+		fs.logger.Error("failed to create feeder", "feederID", feederID, "error", err)
 		return
 	}
 
@@ -744,6 +901,9 @@ func (fs *Feeders) Start() {
 					<-res
 				}
 				for tfID, tf := range params.TokenFeeders {
+					if tfID == 0 {
+						continue
+					}
 					if _, ok := existingFeederIDs[int64(tfID)]; !ok {
 						// create and start a new feeder
 						tokenName := strings.ToLower(params.Tokens[tf.TokenID].Name)
@@ -792,13 +952,50 @@ func (fs *Feeders) Start() {
 					}
 				}
 			case req := <-fs.updateNSTStakersCh:
-				for _, stakerInfo := range req.infos {
-					feeder, ok := fs.feederMap[int(stakerInfo.feederID)]
+				res := make([]*failedFeedersWithError, 0)
+				for feederID, stakerInfo := range req.infos {
+					feeder, ok := fs.feederMap[int(feederID)]
 					if !ok {
 						fs.logger.Error("failed to get feeder by feederID when update price for feeders", "updatePriceReq", req)
 					}
-					feeder.updateNSTStakers(stakerInfo)
+					if err := feeder.updateNSTStakers(stakerInfo); err != nil {
+						res = append(res, &failedFeedersWithError{
+							feederID: feederID,
+							err:      err,
+						})
+					}
 				}
+				req.res <- res
+			case req := <-fs.updateNSTBalancesCh:
+				res := make([]*failedFeedersWithError, 0)
+				for feederID, balanceInfo := range req.infos {
+					feeder, ok := fs.feederMap[int(feederID)]
+					if !ok {
+						fs.logger.Error("failed to get feeder by feederID when update price for feeders", "updatePriceReq", req)
+					}
+					if err := feeder.updateNSTBalance(balanceInfo); err != nil {
+						res = append(res, &failedFeedersWithError{
+							feederID: feederID,
+							err:      err,
+						})
+					}
+				}
+				req.res <- res
+			case req := <-fs.updateNSTPiecesCh:
+				res := make([]*failedFeedersWithError, 0)
+				for feederID, pieceInfo := range req.infos {
+					feeder, ok := fs.feederMap[int(feederID)]
+					if !ok {
+						fs.logger.Error("failed to get feeder by feederID when update price for feeders", "updatePriceReq", req)
+					}
+					if err := feeder.updateNSTPiece(pieceInfo); err != nil {
+						res = append(res, &failedFeedersWithError{
+							feederID: feederID,
+							err:      err,
+						})
+					}
+				}
+				req.res <- res
 			}
 		}
 	}()
@@ -836,7 +1033,7 @@ func (fs *Feeders) UpdateOracleParams(p *oracletypes.Params) {
 	fs.updateParamsCh <- p
 }
 
-func (fs *Feeders) UpdateNSTStakers(updates []*updateNSTStaker) []*failedFeedersWithError {
+func (fs *Feeders) UpdateNSTStakers(updates imuaclienttypes.EventNSTStakers) []*failedFeedersWithError {
 	res := make(chan []*failedFeedersWithError)
 	req := &updateNSTStakersReq{infos: updates, res: res}
 	select {
@@ -845,8 +1042,40 @@ func (fs *Feeders) UpdateNSTStakers(updates []*updateNSTStaker) []*failedFeeders
 		return <-res
 	default:
 		ret := make([]*failedFeedersWithError, 0, len(req.infos))
-		for _, sInfo := range req.infos {
-			ret = append(ret, &failedFeedersWithError{feederID: sInfo.feederID, err: errors.New("failed to update NST staker infos due to channel full")})
+		for feederID := range updates {
+			ret = append(ret, &failedFeedersWithError{feederID: feederID, err: errors.New("failed to update NST staker infos due to channel full")})
+		}
+		return ret
+	}
+}
+
+func (fs *Feeders) UpdateNSTBalances(updates imuaclienttypes.EventNSTBalances) []*failedFeedersWithError {
+	res := make(chan []*failedFeedersWithError)
+	req := &updateNSTBalancesReq{infos: updates, res: res}
+	select {
+	case fs.updateNSTBalancesCh <- req:
+		// if the request of one block is missed, feeder will find out the version mismatch and then update activity
+		return <-res
+	default:
+		ret := make([]*failedFeedersWithError, 0, len(req.infos))
+		for feederID := range updates {
+			ret = append(ret, &failedFeedersWithError{feederID: feederID, err: errors.New("failed to update NST balance due to channel full")})
+		}
+		return ret
+	}
+
+}
+
+func (fs *Feeders) UpdateNSTPieces(updates imuaclienttypes.EventNSTPieces) []*failedFeedersWithError {
+	res := make(chan []*failedFeedersWithError)
+	req := &updateNSTPiecesReq{infos: updates, res: res}
+	select {
+	case fs.updateNSTPiecesCh <- req:
+		return <-res
+	default:
+		ret := make([]*failedFeedersWithError, 0, len(req.infos))
+		for feederID := range updates {
+			ret = append(ret, &failedFeedersWithError{feederID: feederID, err: errors.New("failed to update NST balance due to channel full")})
 		}
 		return ret
 	}

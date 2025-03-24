@@ -17,24 +17,24 @@ const (
 	subStr                       = `{"jsonrpc":"2.0","method":"subscribe","id":0,"params":{"query":"%s"}}`
 	reconnectInterval            = 3
 	maxRetry                     = 600
-	success                      = "success"
+	updated                      = "true"
 	eNewBlock         eventQuery = "tm.event='NewBlock'"
-	eTxUpdatePrice    eventQuery = "tm.event='Tx' AND create_price.price_update='success'"
-	eTxNativeToken    eventQuery = "tm.event='Tx' AND create_price.native_token_update='update'"
-	eTxRawDataPiece   eventQuery = "tm.event='Tx' AND create_price.rawdata_piece_update='true'"
+	eTxUpdatePrice    eventQuery = "tm.event='Tx' AND create_price.price_update='true'"
+	eTxNSTBalance     eventQuery = "tm.event='Tx' AND create_price.nst_balance_update='true'"
+	eTxNSTPiece       eventQuery = "tm.event='Tx' AND create_price.nst_piece_update='true'"
 )
 
 var (
-	subNewBlock       subEvent = subEvent(fmt.Sprintf(subStr, eNewBlock))
-	subTxUpdatePrice  subEvent = subEvent(fmt.Sprintf(subStr, eTxUpdatePrice))
-	subTxNativeToken  subEvent = subEvent(fmt.Sprintf(subStr, eTxNativeToken))
-	subTxRawDataPiece subEvent = subEvent(fmt.Sprintf(subStr, eTxRawDataPiece))
+	subNewBlock      subEvent = subEvent(fmt.Sprintf(subStr, eNewBlock))
+	subTxUpdatePrice subEvent = subEvent(fmt.Sprintf(subStr, eTxUpdatePrice))
+	subTxNSTBalance  subEvent = subEvent(fmt.Sprintf(subStr, eTxNSTBalance))
+	subTxNSTPiece    subEvent = subEvent(fmt.Sprintf(subStr, eTxNSTPiece))
 
 	events = map[subEvent]bool{
-		subNewBlock:       true,
-		subTxUpdatePrice:  true,
-		subTxNativeToken:  true,
-		subTxRawDataPiece: true,
+		subNewBlock:      true,
+		subTxUpdatePrice: true,
+		subTxNSTBalance:  true,
+		subTxNSTPiece:    true,
 	}
 )
 
@@ -297,16 +297,8 @@ func (ec imuaClient) startReadRoutine() bool {
 						break
 					}
 					ec.wsEventsCh <- event
-				case eTxNativeToken:
-					// update validator list for staker
-					event, err := response.GetEventUpdateNSTStakerInfos()
-					if err != nil {
-						ec.logger.Error("failed to get nativeToken event from event-response", "response", response, "error", err)
-						break
-					}
-					ec.wsEventsCh <- event
-				case eTxRawDataPiece:
-					event, err := response.GetEventUpdateRawDataPiece()
+				case eTxNSTPiece:
+					event, err := response.GetEventNSTPiece()
 					if err != nil {
 						ec.logger.Error("failed to get rawdataPiece event from event-response", "response", response, "error", err)
 						break
@@ -322,7 +314,7 @@ func (ec imuaClient) startReadRoutine() bool {
 }
 
 func resetEvents() {
-	for event, _ := range events {
+	for event := range events {
 		events[event] = true
 	}
 }

@@ -4,13 +4,13 @@ package beaconchain
 
 import (
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 
 	"github.com/cosmos/gogoproto/proto"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	"github.com/imua-xyz/price-feeder/fetcher/types"
+	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
@@ -35,6 +35,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 
 	// epoch not updated, just return without fetching since effective-balance has not changed
 	if epoch <= finalizedEpoch && version <= finalizedVersion {
+		s.logger.Info("fetch efb from beaconchain, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)
 		return &types.PriceInfo{
 			Price: string(latestChangesBytes),
 			// combine epoch and version as roundID in priceInfo
@@ -73,36 +74,33 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			stakerBalance += validatorBalance[1]
 		}
 		if delta := stakerBalance - stakerInfo.Balance; delta != 0 {
-			if stakerIdx > math.MaxUint32 {
-				return nil, fmt.Errorf("staker index %d is larger than max uint32", stakerIdx)
-			}
 			changedStakerBalances = append(changedStakerBalances, &oracletypes.NSTKV{
 				StakerIndex: uint32(stakerIdx),
 				Balance:     stakerBalance,
 			})
-			s.logger.Info("fetched efb from beaconchain", "staker_index", stakerIdx, "balance_change", delta, "validators_count", l)
+			s.logger.Info("fetched efb from beaconchain", "staker_index", stakerIdx, "balance_change", delta, "latest_balance", stakerBalance, "validators_count", l)
 			hasEFBChanged = true
 		}
 	}
-	if !hasEFBChanged && len(sInfos) > 0 {
-		s.logger.Info("fetch efb from beaconchain, all efbs of validators remains to 32 without any change")
+	if hasEFBChanged {
+		s.logger.Info("fetch efb from beaconchain, some efbs of validators have changed")
+		sort.Slice(changedStakerBalances, func(i, j int) bool {
+			return changedStakerBalances[i].StakerIndex < changedStakerBalances[j].StakerIndex
+		})
+		nstBS := oracletypes.RawDataNST{
+			Version:           version,
+			NstBalanceChanges: changedStakerBalances,
+		}
+		bz, err := proto.Marshal(&nstBS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal nstBalanceChanges, error:%w", err)
+		}
+		latestChangesBytes = bz
+	} else {
+		latestChangesBytes = fetchertypes.NSTETHZeroChanges
 	}
-	sort.Slice(changedStakerBalances, func(i, j int) bool {
-		return changedStakerBalances[i].StakerIndex < changedStakerBalances[j].StakerIndex
-	})
-
 	finalizedEpoch = epoch
 	finalizedVersion = version
-
-	nstBS := oracletypes.RawDataNST{
-		Version:           version,
-		NstBalanceChanges: changedStakerBalances,
-	}
-	bz, err := proto.Marshal(&nstBS)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal nstBalanceChanges, error:%w", err)
-	}
-	latestChangesBytes = bz
 
 	return &types.PriceInfo{
 		Price:   string(latestChangesBytes),

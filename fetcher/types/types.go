@@ -48,7 +48,7 @@ type SourceInf interface {
 
 type SourceNSTInf interface {
 	SourceInf
-	SetNSTStakers(sInfos StakerInfos, version uint64) error
+	SetNSTStakers(sInfos StakerInfos, version uint64)
 }
 
 type SourceInitFunc func(cfgPath string, logger feedertypes.LoggerInf) (SourceInf, error)
@@ -435,12 +435,13 @@ type NSTToken string
 
 const (
 	defaultPendingTokensLimit = 5
-	defaultInterval           = 30 * time.Second
-	// defaultInterval = 3 * time.Second
-	Chainlink    = "chainlink"
-	BaseCurrency = "usdt"
-	BeaconChain  = "beaconchain"
-	Solana       = "solana"
+	// defaultInterval           = 30 * time.Second
+	// interval set for debug
+	defaultInterval = 5 * time.Second
+	Chainlink       = "chainlink"
+	BaseCurrency    = "usdt"
+	BeaconChain     = "beaconchain"
+	Solana          = "solana"
 
 	NativeTokenETH NSTToken = "nsteth"
 	NativeTokenSOL NSTToken = "nstsol"
@@ -449,7 +450,8 @@ const (
 )
 
 var (
-	NSTETHZeroChanges = make([]byte, 32)
+	// NSTETHZeroChanges = make([]byte, 32)
+	NSTETHZeroChanges = make([]byte, 0)
 	// source -> initializers of source
 	SourceInitializers   = make(map[string]SourceInitFunc)
 	ChainToSlotsPerEpoch = map[uint64]uint64{
@@ -755,6 +757,23 @@ func (s *Stakers) Update(sInfosAdd, sInfosRemove StakerInfos, nextVersion, lates
 	return nil
 }
 
+func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST) error {
+	s.Locker.Lock()
+	defer s.Locker.Unlock()
+	if s.Version != changes.Version {
+		return fmt.Errorf("version mismatch, current:%d, next:%d", s.Version, changes.Version)
+	}
+	for _, change := range changes.NstBalanceChanges {
+		sInfo, exists := s.SInfos[uint32(change.StakerIndex)]
+		if !exists {
+			return fmt.Errorf("stakerIndex not found, staker-index:%d", change.StakerIndex)
+		}
+		sInfo.Balance = change.Balance
+	}
+	s.Version++
+	return nil
+}
+
 func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version uint64, all bool) error {
 	s.Locker.Lock()
 	defer s.Locker.Unlock()
@@ -772,18 +791,12 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version uint64, all bo
 		// we don't limit the staker size here, it's guaranteed by imuachain, and the size might not be equal to the biggest index
 		validators := make([]string, 0, len(sInfo.ValidatorPubkeyList))
 		seenValidatorIdx := make(map[string]struct{})
-		for _, validatorIndexHex := range sInfo.ValidatorPubkeyList {
-			if _, ok := seenValidatorIdx[validatorIndexHex]; ok {
-				return fmt.Errorf("duplicated validatorIndex, validator-index-hex:%s", validatorIndexHex)
+		for _, validator := range sInfo.ValidatorPubkeyList {
+			if _, ok := seenValidatorIdx[validator]; ok {
+				return fmt.Errorf("duplicated validatorIndex, validator-index-hex:%s", validator)
 			}
-			// this is for beaconchain(nst-eth), we use validator-index instead of its full pubkey
-			// TODO: do the conversion outside of this function
-			validatorIdx, err := convertHexToIntStr(validatorIndexHex)
-			if err != nil {
-				return fmt.Errorf("failed to convert validatorIndex from hex string to int, validator-index-hex:%s", validatorIndexHex)
-			}
-			validators = append(validators, validatorIdx)
-			seenValidatorIdx[validatorIndexHex] = struct{}{}
+			validators = append(validators, validator)
+			seenValidatorIdx[validator] = struct{}{}
 		}
 		balance := uint64(0)
 		l := len(sInfo.BalanceList)
@@ -806,7 +819,7 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version uint64, all bo
 	return nil
 }
 
-func convertHexToIntStr(hexStr string) (string, error) {
+func ConvertHexToIntStr(hexStr string) (string, error) {
 	vBytes, err := hexutil.Decode(hexStr)
 	if err != nil {
 		return "", err

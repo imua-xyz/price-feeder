@@ -100,8 +100,8 @@ func (f *Fetcher) AddTokenForSourceUnBlocked(source, token string) {
 	}
 }
 
-func (f *Fetcher) SetNSTStakers(sInfos types.StakerInfos, version uint64) {
-	f.setNSTStakersCh <- &setNSTStakersReq{sInfos: sInfos, version: version}
+func (f *Fetcher) SetNSTStakers(sourceName string, sInfos types.StakerInfos, version uint64) {
+	f.setNSTStakersCh <- &setNSTStakersReq{sourceName: sourceName, sInfos: sInfos, version: version}
 }
 
 // GetLatestPrice return the queried price for the token from specified source
