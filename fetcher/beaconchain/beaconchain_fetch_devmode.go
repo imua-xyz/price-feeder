@@ -32,7 +32,8 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		return nil, feedertypes.ErrTokenNotSupported.Wrap(fmt.Sprintf("only support native-eth-restaking %s, got:%s", types.NativeTokenETH, token))
 	}
 
-	stakerValidators, version := defaultStakerValidators.getStakerValidators()
+	// stakerValidators, version := defaultStakerValidators.getStakerValidators()
+	stakerValidators, version := s.stakers.GetStakersNoCopy()
 	if len(stakerValidators) == 0 {
 		// return zero price when there's no stakers
 		return &types.PriceInfo{}, nil
