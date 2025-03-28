@@ -88,7 +88,7 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 	for feederID, assetID := range twoPhasesFeeders {
 		feeder := feeders.feederMap[feederID]
 		if err := ResetNSTStakers(ecClient, assetID, logger, feeder, true); err != nil {
-			panic(fmt.Sprintf("failed to init nst stakers, error:%s", err.Error()))
+			panic(fmt.Sprintf("failed to init nst stakers, assetID:%s, error:%s", assetID, err.Error()))
 		}
 		sInfos, version := feeder.stakers.GetStakerInfos()
 		feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, version)
@@ -227,7 +227,7 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 					sInfo.ValidatorPubkeyList[i] = validatorIdx
 				}
 			}
-
+		} else {
 		}
 		if err := feeder.stakers.Reset(stakerInfos, version, all); err != nil {
 			logger.Error("failed to update stakers for native-restaking-token", "feederID", feeder.feederID, "token", feeder.token, "error", err)

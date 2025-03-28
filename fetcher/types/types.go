@@ -451,7 +451,7 @@ const (
 
 var (
 	// NSTETHZeroChanges = make([]byte, 32)
-	NSTETHZeroChanges = make([]byte, 0)
+	NSTZeroChanges = make([]byte, 0)
 	// source -> initializers of source
 	SourceInitializers   = make(map[string]SourceInitFunc)
 	ChainToSlotsPerEpoch = map[uint64]uint64{

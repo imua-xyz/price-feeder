@@ -73,17 +73,18 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			// this should be initialized from imuad
 			stakerBalance += validatorBalance[1]
 		}
-		if delta := stakerBalance - stakerInfo.Balance; delta != 0 {
+		//		if delta := stakerBalance - stakerInfo.Balance; delta != 0 {
+		if stakerBalance != stakerInfo.Balance {
 			changedStakerBalances = append(changedStakerBalances, &oracletypes.NSTKV{
 				StakerIndex: uint32(stakerIdx),
 				Balance:     stakerBalance,
 			})
-			s.logger.Info("fetched efb from beaconchain", "staker_index", stakerIdx, "balance_change", delta, "latest_balance", stakerBalance, "validators_count", l)
+			s.logger.Info("fetched efb from beaconchain", "staker_index", stakerIdx, "prev_balance", stakerInfo.Balance, "latest_balance", stakerBalance, "validators_count", l)
 			hasEFBChanged = true
 		}
 	}
 	if hasEFBChanged {
-		s.logger.Info("fetch efb from beaconchain, some efbs of validators have changed")
+		s.logger.Info("fetched efb from beaconchain, some efbs of validators have changed")
 		sort.Slice(changedStakerBalances, func(i, j int) bool {
 			return changedStakerBalances[i].StakerIndex < changedStakerBalances[j].StakerIndex
 		})
@@ -97,7 +98,8 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		}
 		latestChangesBytes = bz
 	} else {
-		latestChangesBytes = fetchertypes.NSTETHZeroChanges
+		s.logger.Info("fetched efb from beaconchain, all efbs remain unchanged")
+		latestChangesBytes = fetchertypes.NSTZeroChanges
 	}
 	finalizedEpoch = epoch
 	finalizedVersion = version

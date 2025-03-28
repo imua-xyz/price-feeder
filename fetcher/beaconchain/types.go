@@ -131,8 +131,6 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 		stakers: types.NewStakers(),
 	}
 
-	// initialize native-restaking stakers' beaconchain-validator list
-
 	// update nst assetID to be consistent with imuad. for beaconchain it's about different lzID
 	types.SetNativeAssetID(fetchertypes.NativeTokenETH, cfg.NSTID)
 

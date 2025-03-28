@@ -38,9 +38,7 @@ type ValidatorPostRequest struct {
 }
 
 const (
-	defaultBalance = 32
-	divisor        = 1000000000
-	maxChange      = -32
+	divisor = 1000000000
 
 	urlQueryHeader          = "eth/v1/beacon/headers"
 	urlQueryHeaderFinalized = "eth/v1/beacon/headers/finalized"
@@ -65,7 +63,7 @@ var (
 	finalizedEpoch   uint64
 	finalizedVersion uint64
 
-	latestChangesBytes = types.NSTETHZeroChanges
+	latestChangesBytes = types.NSTZeroChanges
 
 	urlEndpoint   *url.URL
 	slotsPerEpoch uint64
@@ -88,7 +86,10 @@ func getValidators(validators []string, stateRoot string) ([][]uint64, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
-	result, _ := io.ReadAll(res.Body)
+	result, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
 	re := ResultValidators{}
 	if err := json.Unmarshal(result, &re); err != nil {
 		logger.Error("failed to parse GetValidators response", "error", err)
