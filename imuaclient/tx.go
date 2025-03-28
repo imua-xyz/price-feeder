@@ -40,7 +40,6 @@ func (ec imuaClient) SendTx(feederID, baseBlock uint64, price fetchertypes.Price
 
 func (ec imuaClient) SendTx2Phases(feederID, baseBlock uint64, prices []*fetchertypes.PriceInfo, phase oracletypes.AggregationPhase, nonce int32) (*sdktx.BroadcastTxResponse, error) {
 	msg, txBytes, err := ec.getSignedTxBytes2Phases(feederID, baseBlock, prices, phase, nonce)
-	fmt.Println("debug(leonz)--->sendTx2Phases.msg", msg)
 	if err != nil {
 		return nil, err
 	}
