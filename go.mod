@@ -269,8 +269,7 @@ replace (
 	// Security Advisory https://github.com/advisories/GHSA-h395-qcrw-5vmq
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.9.1
 
-	// github.com/imua-xyz/imuachain v0.0.0-20250221095538-9f51483a7966 => github.com/leonz789/exocore v0.0.0-20250324022108-6806e286103d
-	github.com/imua-xyz/imuachain v0.0.0-20250221095538-9f51483a7966 => /Users/linqing/workplace/github.com/leonz/imua-xyz/imuachain
+	github.com/imua-xyz/imuachain v0.0.0-20250221095538-9f51483a7966 => github.com/leonz789/exocore v0.0.0-20250324022108-6806e286103d
 	// replace broken goleveldb
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	//fix cosmos-sdk error
