@@ -115,14 +115,14 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 						for _, sInfo := range update[0].SInfos() {
 							for i, validator := range sInfo.Validators {
 								// TODO: error handling
-								validatorIdx, _ := fetchertypes.ConvertHexToIntStr(validator)
+								validatorIdx := fetchertypes.ConvertBytesToIntStr(validator)
 								sInfo.Validators[i] = validatorIdx
 							}
 						}
 						for _, sInfo := range update[1].SInfos() {
 							for i, validator := range sInfo.Validators {
 								// TODO: error handling
-								validatorIdx, _ := fetchertypes.ConvertHexToIntStr(validator)
+								validatorIdx := fetchertypes.ConvertBytesToIntStr(validator)
 								sInfo.Validators[i] = validatorIdx
 							}
 						}
@@ -227,7 +227,6 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 					sInfo.ValidatorPubkeyList[i] = validatorIdx
 				}
 			}
-		} else {
 		}
 		if err := feeder.stakers.Reset(stakerInfos, version, all); err != nil {
 			logger.Error("failed to update stakers for native-restaking-token", "feederID", feeder.feederID, "token", feeder.token, "error", err)

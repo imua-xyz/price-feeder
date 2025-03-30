@@ -825,5 +825,8 @@ func ConvertHexToIntStr(hexStr string) (string, error) {
 		return "", err
 	}
 	return new(big.Int).SetBytes(vBytes).String(), nil
+}
 
+func ConvertBytesToIntStr(bytesStr string) string {
+	return new(big.Int).SetBytes([]byte(bytesStr)).String()
 }

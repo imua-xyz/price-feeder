@@ -16,6 +16,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/cosmos/go-bip39"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/evmos/evmos/v16/encoding"
 	"github.com/imua-xyz/imuachain/app"
 	cmdcfg "github.com/imua-xyz/imuachain/cmd/config"
@@ -337,8 +338,9 @@ func (s *SubscribeResult) getEventNSTStakers() (EventNSTStakers, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse amount in nstChange from event_txUpdateNST response, error:%w", err)
 		}
+		validatorDecoded, _ := hexutil.Decode(parsed[2])
 		err = eInfo.sInfos.Add(stakerIndex, &fetchertypes.StakerInfo{
-			Validators: []string{parsed[2]},
+			Validators: []string{string(validatorDecoded)},
 			Balance:    amount,
 		})
 		if err != nil {
