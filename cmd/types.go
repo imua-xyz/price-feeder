@@ -92,6 +92,23 @@ type localPrice struct {
 	height int64
 }
 
+// updatePrice will transafer the decimal for LST
+func (lp *localPrice) updatePrice(p *updatePrice, twoPhases bool) (string, error) {
+	// TODO: convert decimal
+	updatedPrice := *(p.price)
+	if twoPhases {
+		rootHash, err := base64.StdEncoding.DecodeString(p.price.Price)
+		rootHash = rootHash[:32]
+		if err != nil {
+			return "", fmt.Errorf("failed to parse rootHash from base64 price-string, price:%v, error:%w", p.price, err)
+		}
+		updatedPrice.Price = string(rootHash)
+	}
+	lp.price = updatedPrice
+	lp.height = p.txHeight
+	return lp.price.Price, nil
+}
+
 type twoPhasesInfo struct {
 	roundID       uint64
 	cachedTree    []*oracletypes.MerkleTree
@@ -229,6 +246,7 @@ type feeder struct {
 	// TODO: currently only 1 source for each token, so we can just set it as a field here
 	source   string
 	token    string
+	decimal  int32
 	tokenID  uint64
 	feederID int
 	// TODO: add check for rouleID, v1 can be skipped
@@ -508,11 +526,12 @@ func (f *feeder) Info() FeederInfo {
 }
 
 // neFeeder create a new feeder with the given parameters
-func newFeeder(tf *oracletypes.TokenFeeder, feederID int, fetcher PriceFetcher, submitter priceSubmitter, source string, token string, maxNonce int32, pieceSize uint32, isTwoPhases bool, logger feedertypes.LoggerInf) (*feeder, error) {
+func newFeeder(tf *oracletypes.TokenFeeder, feederID int, fetcher PriceFetcher, submitter priceSubmitter, source string, token string, maxNonce, decimal int32, pieceSize uint32, isTwoPhases bool, logger feedertypes.LoggerInf) (*feeder, error) {
 	ret := feeder{
 		logger:   logger,
 		source:   source,
 		token:    token,
+		decimal:  decimal,
 		tokenID:  tf.TokenID,
 		feederID: feederID,
 		// these conversion a safe since the block height defined in cosmossdk is int64
@@ -641,16 +660,22 @@ func (f *feeder) start() {
 
 						if f.IsTwoPhases() {
 							_, rootHash := f.AddRawData(roundID, []byte(price.Price), f.twoPhasesPieceSize)
-							// TODO(leonz): decide to send or not based on resul of 2nd phase
 							if bytes.Equal(rootHash, []byte(f.lastPrice.price.Price)) {
 								f.logger.Info("didn't submit price for 1st-phase of 2phases due to price not changed", "roundID", roundID, "delta", delta, "price", price)
 								f.logger.Debug("got latsetprice(rootHash) equal to local cache", "feeder", f.Info())
 								continue
 							}
-						} else if !f.priceChanged(&price) {
-							f.logger.Info("didn't submit price due to price not changed", "roundID", roundID, "delta", delta, "price", price)
-							f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
-							continue
+						} else {
+							// convert the decimal of LST to match definition in oracle module config
+							if price.Decimal != f.decimal {
+								price.Price = convertDecimal(price.Price, price.Decimal, f.decimal)
+								price.Decimal = f.decimal
+							}
+							if !f.priceChanged(&price) {
+								f.logger.Info("didn't submit price due to price not changed", "roundID", roundID, "delta", delta, "price", price)
+								f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
+								continue
+							}
 						}
 						if nonce := f.lastSent.getNextNonceAndUpdate(roundID); nonce < 0 {
 							f.logger.Error("failed to submit due to no available nonce", "roundID", roundID, "delta", delta, "feeder", f.Info())
@@ -687,29 +712,22 @@ func (f *feeder) start() {
 					}
 				}
 			case price := <-f.priceCh:
-				f.lastPrice.price = *(price.price)
-				// update latest height that price had been updated
 				if f.IsTwoPhases() {
-					rootHash, err := base64.StdEncoding.DecodeString(price.price.Price)
-					rootHash = rootHash[:32]
+					rootHash, err := f.lastPrice.updatePrice(price, true)
 					if err != nil {
-						f.logger.Error("failed to update local price due to failed to parse rootHash from base64 price-string", "price", price.price, "error", err)
+						f.logger.Error("failed to update local price", "error", err)
 						continue
 					}
-					f.lastPrice.price = *(price.price)
-					f.lastPrice.price.Price = string(rootHash)
-					f.logger.Info("finalize rootHash", "root", price.price.Price)
-					f.FinalizeRawData(f.roundID, rootHash)
-				} else {
-					f.lastPrice.price = *(price.price)
+					f.logger.Info("finalize rootHash", "root", rootHash)
+					f.FinalizeRawData(f.roundID, []byte(rootHash))
+					if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {
+						f.logger.Info("sent 2nd phase rawdata piece transaction after 1st phase price updated", "sent_count", len(sentIndexes), "indexes", sentIndexes)
+					}
+				} else if _, err := f.lastPrice.updatePrice(price, false); err != nil {
+					f.logger.Error("failed to update local price", "error", err)
+					continue
 				}
-				// update latest height that price had been updated
-				f.lastPrice.height = price.txHeight
 				f.logger.Info("synced local price with latest price from imuachain", "price", price.price, "txHeight", price.txHeight)
-				// try to send 2nd phase tx immediately if 1st-phase has been finalized
-				if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {
-					f.logger.Info("sent 2nd phase rawdata piece transaction after 1st phase price updated", "sent_count", len(sentIndexes), "indexes", sentIndexes)
-				}
 			case req := <-f.paramsCh:
 				if err := f.updateFeederParams(req.params); err != nil {
 					// This should not happen under this case.
@@ -914,14 +932,14 @@ func NewFeeders(logger feedertypes.LoggerInf, fetcher PriceFetcher, submitter pr
 
 }
 
-func (fs *Feeders) SetupFeeder(tf *oracletypes.TokenFeeder, feederID int, source string, token string, maxNonce int32, pieceSize uint32, isTwoPhases bool) {
+func (fs *Feeders) SetupFeeder(tf *oracletypes.TokenFeeder, feederID int, source string, token string, maxNonce, decimal int32, pieceSize uint32, isTwoPhases bool) {
 	fs.locker.Lock()
 	defer fs.locker.Unlock()
 	if fs.running {
 		fs.logger.Error("failed to setup feeder for a running feeders, this should be called before feeders is started", "feederID", feederID)
 		return
 	}
-	f, err := newFeeder(tf, feederID, fs.fetcher, fs.submitter, source, token, maxNonce, pieceSize, isTwoPhases, fs.logger.With("feeder", fmt.Sprintf(loggerTagPrefix, token, feederID)))
+	f, err := newFeeder(tf, feederID, fs.fetcher, fs.submitter, source, token, maxNonce, decimal, pieceSize, isTwoPhases, fs.logger.With("feeder", fmt.Sprintf(loggerTagPrefix, token, feederID)))
 	if err != nil {
 		fs.logger.Error("failed to create feeder", "feederID", feederID, "error", err)
 		return
@@ -966,6 +984,7 @@ func (fs *Feeders) Start() {
 					if _, ok := existingFeederIDs[int64(tfID)]; !ok {
 						// create and start a new feeder
 						tokenName := strings.ToLower(params.Tokens[tf.TokenID].Name)
+						decimal := params.Tokens[tf.TokenID].Decimal
 						source := fetchertypes.Chainlink
 						if fetchertypes.IsNSTToken(tokenName) {
 							nstToken := fetchertypes.NSTToken(tokenName)
@@ -977,7 +996,7 @@ func (fs *Feeders) Start() {
 							tokenName += fetchertypes.BaseCurrency
 						}
 
-						feeder, err := newFeeder(tf, tfID, fs.fetcher, fs.submitter, source, tokenName, params.MaxNonce, params.PieceSizeByte, params.IsRule2PhasesByFeederID(uint64(tfID)), fs.logger)
+						feeder, err := newFeeder(tf, tfID, fs.fetcher, fs.submitter, source, tokenName, params.MaxNonce, decimal, params.PieceSizeByte, params.IsRule2PhasesByFeederID(uint64(tfID)), fs.logger)
 						if err != nil {
 							fs.logger.Error("failed to create feeder", "error", err)
 							continue
@@ -1139,3 +1158,19 @@ func (fs *Feeders) UpdateNSTPieces(updates imuaclienttypes.EventNSTPieces) []*fa
 		return ret
 	}
 }
+
+func convertDecimal(price string, decimalFrom, decimalTo int32) string {
+	if decimalTo > decimalFrom {
+		return price + strings.Repeat("0", int(decimalTo-decimalFrom))
+	}
+	if decimalTo < decimalFrom {
+		delta := int(decimalFrom - decimalTo)
+		if len(price) <= delta {
+			return ""
+		}
+		return price[:len(price)-delta]
+	}
+	return price
+}
+
+// from: 5 to 1

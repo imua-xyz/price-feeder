@@ -16,8 +16,9 @@ type ResultValidators struct {
 	Data []struct {
 		Index     string `json:"index"`
 		Validator struct {
-			Pubkey           string `json:"pubkey"`
-			EffectiveBalance string `json:"effective_balance"`
+			Pubkey            string `json:"pubkey"`
+			EffectiveBalance  string `json:"effective_balance"`
+			WithdrawableEpoch string `json:"withdrawable_epoch"`
 		} `json:"validator"`
 	} `json:"data"`
 }
@@ -38,6 +39,7 @@ type ValidatorPostRequest struct {
 }
 
 const (
+	// the response from beaconchain represents ETH with 10^9 decimals
 	divisor = 1000000000
 
 	urlQueryHeader          = "eth/v1/beacon/headers"
@@ -74,7 +76,11 @@ func (s *source) reload(token, cfgPath string) error {
 	return nil
 }
 
-func getValidators(validators []string, stateRoot string) ([][]uint64, error) {
+func getValidators(validators []string, stateRoot string, epoch uint64) ([][]uint64, error) {
+	epochN, err := strconv.ParseUint(value.Validator.EffectiveBalance, 10, 64)
+	if err != nil {
+		return nil, err
+	}
 	reqBody := ValidatorPostRequest{
 		IDs: validators,
 	}
@@ -97,8 +103,13 @@ func getValidators(validators []string, stateRoot string) ([][]uint64, error) {
 	}
 	ret := make([][]uint64, 0, len(re.Data))
 	for _, value := range re.Data {
-		index, _ := strconv.ParseUint(value.Index, 10, 64)
 		efb, _ := strconv.ParseUint(value.Validator.EffectiveBalance, 10, 64)
+		wEpoch, _ := strconv.ParseUint(value.Validator.WithdrawableEpoch, 10, 64)
+		// we don't report any changes for operation:withdraw, that 'change' will be reflect by 'withdraw', we only report changes caused by 'slash/refund'
+		if efb == 0 && epochN > wEpoch {
+			continue
+		}
+		index, _ := strconv.ParseUint(value.Index, 10, 64)
 		ret = append(ret, []uint64{index, efb / divisor})
 	}
 	return ret, nil

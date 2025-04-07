@@ -67,6 +67,7 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 			continue
 		}
 		tokenName := strings.ToLower(oracleP.Tokens[feeder.TokenID].Name)
+		decimal := oracleP.Tokens[feeder.TokenID].Decimal
 		sourceName := fetchertypes.Chainlink
 		// TODO(leonz): unify with Rule check
 		if fetchertypes.IsNSTToken(tokenName) {
@@ -79,7 +80,7 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 			// NOTE: this is for V1 only
 			tokenName += fetchertypes.BaseCurrency
 		}
-		feeders.SetupFeeder(feeder, feederID, sourceName, tokenName, maxNonce, pieceSize, oracleP.IsRule2PhasesByFeederID(uint64(feederID)))
+		feeders.SetupFeeder(feeder, feederID, sourceName, tokenName, maxNonce, decimal, pieceSize, oracleP.IsRule2PhasesByFeederID(uint64(feederID)))
 	}
 	feeders.Start()
 
