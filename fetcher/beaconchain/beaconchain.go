@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -105,12 +106,14 @@ func getValidators(validators []string, stateRoot string, epoch uint64) ([][]uin
 	for _, value := range re.Data {
 		efb, _ := strconv.ParseUint(value.Validator.EffectiveBalance, 10, 64)
 		wEpoch, _ := strconv.ParseUint(value.Validator.WithdrawableEpoch, 10, 64)
-		// we don't report any changes for operation:withdraw, that 'change' will be reflect by 'withdraw', we only report changes caused by 'slash/refund'
-		if efb == 0 && epochN > wEpoch {
-			continue
-		}
+
 		index, _ := strconv.ParseUint(value.Index, 10, 64)
-		ret = append(ret, []uint64{index, efb / divisor})
+		if efb == 0 && epochN > wEpoch {
+			// use math.MaxUint64 to indicate that the validator is not active
+			ret = append(ret, []uint64{index, math.MaxUint64})
+		} else {
+			ret = append(ret, []uint64{index, efb / divisor})
+		}
 	}
 	return ret, nil
 }
