@@ -78,10 +78,6 @@ func (s *source) reload(token, cfgPath string) error {
 }
 
 func getValidators(validators []string, stateRoot string, epoch uint64) ([][]uint64, error) {
-	epochN, err := strconv.ParseUint(value.Validator.EffectiveBalance, 10, 64)
-	if err != nil {
-		return nil, err
-	}
 	reqBody := ValidatorPostRequest{
 		IDs: validators,
 	}
@@ -108,7 +104,7 @@ func getValidators(validators []string, stateRoot string, epoch uint64) ([][]uin
 		wEpoch, _ := strconv.ParseUint(value.Validator.WithdrawableEpoch, 10, 64)
 
 		index, _ := strconv.ParseUint(value.Index, 10, 64)
-		if efb == 0 && epochN > wEpoch {
+		if efb == 0 && epoch > wEpoch {
 			// use math.MaxUint64 to indicate that the validator is not active
 			ret = append(ret, []uint64{index, math.MaxUint64})
 		} else {

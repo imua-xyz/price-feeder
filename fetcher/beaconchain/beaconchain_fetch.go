@@ -56,7 +56,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			tmpValidatorPubkeys := validators[i : i+100]
 			i += 100
 			l -= 100
-			validatorBalances, err := getValidators(tmpValidatorPubkeys, stateRoot)
+			validatorBalances, err := getValidators(tmpValidatorPubkeys, stateRoot, epoch)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get validators from beaconchain, error:%w", err)
 			}
@@ -65,7 +65,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			}
 		}
 
-		validatorBalances, err := getValidators(validators[i:], stateRoot)
+		validatorBalances, err := getValidators(validators[i:], stateRoot, epoch)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get validators from beaconchain, error:%w", err)
 		}
