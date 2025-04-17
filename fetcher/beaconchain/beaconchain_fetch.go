@@ -3,16 +3,69 @@
 package beaconchain
 
 import (
+	"context"
 	"fmt"
+	"math/big"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/cosmos/gogoproto/proto"
+	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	"github.com/imua-xyz/price-feeder/fetcher/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
+
+const (
+	proxyAddressHex = "0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172"
+	// bootstrapStorageABI = `[{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"ownerToCapsule","outputs":[{"name":"","type":"address"}],"payable":false,"stateMutability":"view","type":"function"}]`
+)
+
+// Helper to get capsule balance
+func getCapsuleBalance(ethClient *ethclient.Client, capsuleAddr string, blockNumber *big.Int) (*big.Int, error) {
+	address := common.HexToAddress(capsuleAddr)
+	balance, err := ethClient.BalanceAt(context.Background(), address, blockNumber)
+	if err != nil {
+		return nil, err
+	}
+	return balance, nil
+}
+
+// getCapsuleAddressForStaker queries the ownerToCapsule(address) method on the proxy contract
+func getCapsuleAddressForStaker(ethClient *ethclient.Client, stakerAddr string, blockNumber *big.Int) (string, error) {
+	if stakerAddr == "" {
+		return "", nil
+	}
+	parsedABI, err := abi.JSON(strings.NewReader(bootstrapStorageABI))
+	if err != nil {
+		return "", err
+	}
+	owner := common.HexToAddress(stakerAddr)
+	input, err := parsedABI.Pack("ownerToCapsule", owner)
+	if err != nil {
+		return "", err
+	}
+	proxyAddress := common.HexToAddress(proxyAddressHex)
+	callMsg := ethereum.CallMsg{
+		To:   &proxyAddress,
+		Data: input,
+	}
+	output, err := ethClient.CallContract(context.Background(), callMsg, blockNumber)
+	if err != nil {
+		return "", err
+	}
+	var capsuleAddress common.Address
+	err = parsedABI.UnpackIntoInterface(&capsuleAddress, "ownerToCapsule", output)
+	if err != nil {
+		return "", err
+	}
+	return capsuleAddress.Hex(), nil
+}
 
 func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	// check epoch, when epoch updated, update effective-balance
@@ -27,11 +80,15 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		return &types.PriceInfo{}, nil
 	}
 
-	// check if finalized epoch had been updated
-	epoch, stateRoot, err := getFinalizedEpoch()
+	// --- CL/EL synchronization ---
+	elBlockNumber, clSlot, stateRoot, err := getFinalizedELBlockNumber()
 	if err != nil {
-		return nil, fmt.Errorf("fail to get finalized epoch from beaconchain, error:%w", err)
+		return nil, fmt.Errorf("fail to get finalized EL block number, error:%w", err)
 	}
+	blockNumber := big.NewInt(elBlockNumber)
+	// Calculate epoch from slot
+	epoch := clSlot / slotsPerEpoch
+	// --- End CL/EL synchronization ---
 
 	// epoch not updated, just return without fetching since effective-balance has not changed
 	if epoch <= finalizedEpoch && version <= finalizedVersion {
@@ -70,10 +127,28 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			return nil, fmt.Errorf("failed to get validators from beaconchain, error:%w", err)
 		}
 		for _, validatorBalance := range validatorBalances {
-			// this should be initialized from imuad
 			stakerBalance += validatorBalance[1]
 		}
-		//		if delta := stakerBalance - stakerInfo.Balance; delta != 0 {
+
+		// Capsule balance integration
+		capsuleAddr, err := getCapsuleAddressForStaker(s.ethClient, stakerInfo.Address, blockNumber)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get capsule address, staker_index:%d, staker:%s, err:%w", stakerIdx, stakerInfo.Address, err)
+		}
+
+		if len(capsuleAddr) == 0 || s.ethClient == nil {
+			return nil, fmt.Errorf("capsule address is empty:%t or ethClient is nil:%t, staker_index:%d, staker:%s", len(capsuleAddr) == 0, s.ethClient == nil, stakerIdx, stakerInfo.Address)
+		}
+
+		capsuleBalance, err := getCapsuleBalance(s.ethClient, capsuleAddr, blockNumber)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get capsule balance, staker_index:%d, capsule:%s, err:%w", stakerIdx, capsuleAddr, err)
+		}
+
+		capsuleBalanceGwei := new(big.Int).Div(capsuleBalance, big.NewInt(1e9))
+		stakerBalance += capsuleBalanceGwei.Uint64()
+		// --- End capsule balance integration ---
+
 		if stakerBalance != stakerInfo.Balance {
 			changedStakerBalances = append(changedStakerBalances, &oracletypes.NSTKV{
 				StakerIndex: uint32(stakerIdx),
@@ -96,6 +171,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal nstBalanceChanges, error:%w", err)
 		}
+
 		latestChangesBytes = bz
 	} else {
 		s.logger.Info("fetched efb from beaconchain, all efbs remain unchanged")

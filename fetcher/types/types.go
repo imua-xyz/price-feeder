@@ -495,6 +495,7 @@ func IsNSTToken(tokenName string) bool {
 }
 
 type StakerInfo struct {
+	Address    string
 	Validators []string
 	Balance    uint64
 }
@@ -531,6 +532,7 @@ func (sis StakerInfos) GetCopy() StakerInfos {
 	ret := make(StakerInfos)
 	for idx, si := range sis {
 		ret[idx] = &StakerInfo{
+			Address:    si.Address,
 			Validators: si.Validators,
 			Balance:    si.Balance,
 		}
@@ -763,13 +765,21 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST) error {
 	if s.Version != changes.Version {
 		return fmt.Errorf("version mismatch, current:%d, next:%d", s.Version, changes.Version)
 	}
+	removed := make([]uint32, 0)
 	for _, change := range changes.NstBalanceChanges {
 		sInfo, exists := s.SInfos[uint32(change.StakerIndex)]
 		if !exists {
 			return fmt.Errorf("stakerIndex not found, staker-index:%d", change.StakerIndex)
 		}
-		sInfo.Balance = change.Balance
+		if change.Balance == 0 {
+			// remove this staker
+			removed = append(removed, change.StakerIndex)
+		} else {
+			sInfo.Balance = change.Balance
+		}
 	}
+	//TODO: handle the removed stakers
+
 	s.Version++
 	return nil
 }
@@ -804,6 +814,7 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version uint64, all bo
 			balance = uint64(sInfo.BalanceList[l-1].Balance)
 		}
 		tmp[uint32(sInfo.StakerIndex)] = &StakerInfo{
+			Address:    sInfo.StakerAddr,
 			Validators: validators,
 			Balance:    balance,
 		}
