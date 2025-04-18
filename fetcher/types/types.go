@@ -14,10 +14,12 @@ import (
 	"slices"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	oraclecommon "github.com/imua-xyz/imuachain/x/oracle/keeper/common"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
+// SourceInf defines the interface for a price source, including initialization, starting, adding tokens, and stopping.
 type SourceInf interface {
 	// InitTokens used for initialization, it should only be called before 'Start'
 	// when the source is not 'running', this method vill overwrite the source's 'tokens' list
@@ -46,16 +48,19 @@ type SourceInf interface {
 	// RestarAllToken()
 }
 
+// SourceNSTInf extends SourceInf with a method to set NST stakers and version.
 type SourceNSTInf interface {
 	SourceInf
 	SetNSTStakers(sInfos StakerInfos, version uint64)
 }
 
+// SourceInitFunc is a function type for initializing a SourceInf from a config path and logger.
 type SourceInitFunc func(cfgPath string, logger feedertypes.LoggerInf) (SourceInf, error)
 
+// SourceFetchFunc is a function type for fetching a price for a given token.
 type SourceFetchFunc func(token string) (*PriceInfo, error)
 
-// SourceReloadConfigFunc reload source config file
+// SourceReloadConfigFunc is a function type for reloading a source's config file for a specific token.
 // reload meant to be called during source running, the concurrency should be handled well
 type SourceReloadConfigFunc func(config, token string) error
 
@@ -64,6 +69,7 @@ type NativeRestakingInfo struct {
 	TokenID string
 }
 
+// PriceInfo holds price data for a token, including value, decimals, timestamp, and round ID.
 type PriceInfo struct {
 	Price     string
 	Decimal   int32
@@ -98,12 +104,12 @@ type addTokenRes struct {
 	err   error
 }
 
-// IsZero is used to check if a PriceInfo has not been assigned, similar to a nil value in a pointer variable
+// IsZero checks if a PriceInfo has not been assigned a value.
 func (p PriceInfo) IsZero() bool {
 	return len(p.Price) == 0
 }
 
-// Equal compare two PriceInfo ignoring the timestamp, roundID fields
+// EqualPrice compares two PriceInfo values, ignoring timestamp and roundID fields.
 func (p PriceInfo) EqualPrice(price PriceInfo) bool {
 	if p.Price == price.Price &&
 		p.Decimal == price.Decimal {
@@ -126,6 +132,7 @@ func (p PriceInfo) EqualToBase64Price(price PriceInfo) bool {
 	return false
 }
 
+// NewPriceSync creates a new PriceSync instance with a mutex and empty PriceInfo.
 func NewPriceSync() *PriceSync {
 	return &PriceSync{
 		lock: new(sync.RWMutex),
@@ -133,6 +140,7 @@ func NewPriceSync() *PriceSync {
 	}
 }
 
+// Get returns a copy of the current PriceInfo in a concurrency-safe way.
 func (p *PriceSync) Get() PriceInfo {
 	p.lock.RLock()
 	price := *p.info
@@ -140,6 +148,7 @@ func (p *PriceSync) Get() PriceInfo {
 	return price
 }
 
+// Update sets the PriceInfo if it differs from the current value, returning true if updated.
 func (p *PriceSync) Update(price PriceInfo) (updated bool) {
 	p.lock.Lock()
 	if !price.EqualPrice(*p.info) {
@@ -150,12 +159,14 @@ func (p *PriceSync) Update(price PriceInfo) (updated bool) {
 	return
 }
 
+// Set sets the PriceInfo value in a concurrency-safe way.
 func (p *PriceSync) Set(price PriceInfo) {
 	p.lock.Lock()
 	*p.info = price
 	p.lock.Unlock()
 }
 
+// NewTokenInfo creates a new tokenInfo with the given name and PriceSync.
 func NewTokenInfo(name string, price *PriceSync) *tokenInfo {
 	return &tokenInfo{
 		name:   name,
@@ -164,22 +175,22 @@ func NewTokenInfo(name string, price *PriceSync) *tokenInfo {
 	}
 }
 
-// GetPriceSync returns the price structure which has lock to make sure concurrency safe
+// GetPriceSync returns the PriceSync for the token.
 func (t *tokenInfo) GetPriceSync() *PriceSync {
 	return t.price
 }
 
-// GetPrice returns the price info
+// GetPrice returns the current PriceInfo for the token.
 func (t *tokenInfo) GetPrice() PriceInfo {
 	return t.price.Get()
 }
 
-// GetActive returns the active status
+// GetActive returns whether the token is active.
 func (t *tokenInfo) GetActive() bool {
 	return t.active.Load()
 }
 
-// SetActive set the active status
+// SetActive sets the active status for the token.
 func (t *tokenInfo) SetActive(v bool) {
 	t.active.Store(v)
 }
@@ -473,20 +484,22 @@ var (
 	Logger feedertypes.LoggerInf
 )
 
+// SetNativeAssetID sets the asset ID for a given NSTToken.
 func SetNativeAssetID(nstToken NSTToken, assetID string) {
 	NSTAssetIDMap[nstToken] = assetID
 }
 
-// GetNSTSource returns source name as string
+// GetNSTSource returns the source name for a given NSTToken.
 func GetNSTSource(nstToken NSTToken) string {
 	return NSTSourceMap[nstToken]
 }
 
-// GetNSTAssetID returns nst assetID as string
+// GetNSTAssetID returns the asset ID for a given NSTToken.
 func GetNSTAssetID(nstToken NSTToken) string {
 	return NSTAssetIDMap[nstToken]
 }
 
+// IsNSTToken checks if a token name is an NSTToken.
 func IsNSTToken(tokenName string) bool {
 	if _, ok := NSTTokens[NSTToken(tokenName)]; ok {
 		return true
@@ -502,6 +515,7 @@ type StakerInfo struct {
 
 type StakerInfos map[uint32]*StakerInfo
 
+// NewStakerInfo creates a new StakerInfo instance.
 func NewStakerInfo() *StakerInfo {
 	return &StakerInfo{
 		Validators: make([]string, 0),
@@ -509,6 +523,7 @@ func NewStakerInfo() *StakerInfo {
 	}
 }
 
+// AddValidator adds a validator and its balance to the StakerInfo if not already present.
 func (s *StakerInfo) AddValidator(validator string, balance uint64) bool {
 	if s == nil {
 		return false
@@ -527,6 +542,7 @@ type Stakers struct {
 	SInfos  StakerInfos
 }
 
+// GetCopy returns a deep copy of the StakerInfos map.
 func (sis StakerInfos) GetCopy() StakerInfos {
 	//	ret := make(map[uint64][]string)
 	ret := make(StakerInfos)
@@ -540,6 +556,7 @@ func (sis StakerInfos) GetCopy() StakerInfos {
 	return ret
 }
 
+// GetSVList returns a map of staker indices to their validator lists.
 func (sis *StakerInfos) GetSVList() map[uint32][]string {
 	ret := make(map[uint32][]string)
 	for idx, si := range *sis {
@@ -548,7 +565,7 @@ func (sis *StakerInfos) GetSVList() map[uint32][]string {
 	return ret
 }
 
-// Add will add the given stakerInfo of stakerIndex to the stakerInfos, if the process failed, the original StakerInfos might be changed, however this is faster than AddAllOrNone, so it suits the case when the 'allOrNone' is not important
+// Add adds a StakerInfo to the StakerInfos for a given staker index.
 func (sis *StakerInfos) Add(stakerIndex uint32, sAdd *StakerInfo) error {
 	if sis == nil {
 		return fmt.Errorf("failed to do add, stakerInfos is nil")
@@ -573,6 +590,7 @@ func (sis *StakerInfos) Add(stakerIndex uint32, sAdd *StakerInfo) error {
 	return nil
 }
 
+// Remove removes a StakerInfo from the StakerInfos for a given staker index.
 func (sis *StakerInfos) Remove(stakerIndex uint32, sRemove StakerInfo) error {
 	if sis == nil {
 		return fmt.Errorf("failed to do add, stakerInfos is nil")
@@ -607,6 +625,7 @@ func (sis *StakerInfos) Remove(stakerIndex uint32, sRemove StakerInfo) error {
 	return nil
 }
 
+// AddAllOrNone adds all StakerInfos from sAdd, or none if any would conflict.
 func (sis *StakerInfos) AddAllOrNone(sAdd StakerInfos) error {
 	if len(sAdd) == 0 {
 		return nil
@@ -643,6 +662,7 @@ func (sis *StakerInfos) AddAllOrNone(sAdd StakerInfos) error {
 	return nil
 }
 
+// RemoveAllOrNone removes all StakerInfos in sRemove, or none if any would fail.
 func (sis *StakerInfos) RemoveAllOrNone(sRemove StakerInfos) error {
 	if len(sRemove) == 0 {
 		return nil
@@ -687,6 +707,7 @@ func (sis *StakerInfos) RemoveAllOrNone(sRemove StakerInfos) error {
 	return nil
 }
 
+// Update adds and removes StakerInfos in a single operation.
 func (sis *StakerInfos) Update(sAdd, sRemove StakerInfos) error {
 	if err := sis.AddAllOrNone(sAdd); err != nil {
 		return err
@@ -697,6 +718,7 @@ func (sis *StakerInfos) Update(sAdd, sRemove StakerInfos) error {
 	return nil
 }
 
+// NewStakers creates a new Stakers instance.
 func NewStakers() *Stakers {
 	return &Stakers{
 		Locker: new(sync.RWMutex),
@@ -704,6 +726,7 @@ func NewStakers() *Stakers {
 	}
 }
 
+// Length returns the number of stakers.
 func (s *Stakers) Length() int {
 	if s == nil {
 		return 0
@@ -714,21 +737,21 @@ func (s *Stakers) Length() int {
 	return l
 }
 
-// GetStakerInfos returns the stakerInfos and version, the stakerInfos is a copy, so it can be modified
+// GetStakerInfos returns a copy of the staker infos and the current version.
 func (s *Stakers) GetStakerInfos() (StakerInfos, uint64) {
 	s.Locker.RLock()
 	defer s.Locker.RUnlock()
 	return s.SInfos.GetCopy(), s.Version
 }
 
-// GetStakerInfosNoCopy returns the stakerInfos and version, the stakerInfos is not a copy, so it should not be modified
+// GetStakersNoCopy returns the staker infos and version without copying (should not be modified).
 func (s *Stakers) GetStakersNoCopy() (StakerInfos, uint64) {
 	s.Locker.RLock()
 	defer s.Locker.RUnlock()
 	return s.SInfos, s.Version
 }
 
-// SetStakerInfos set the stakerInfos and version, this method should be called when the stakerInfos is initialized or reset, it will not modify the existing stakerInfos but just replace it
+// SetStakerInfos sets the staker infos and version, replacing the current data.
 func (s *Stakers) SetStakerInfos(sInfos StakerInfos, version uint64) {
 	s.Locker.Lock()
 	s.SInfos = sInfos
@@ -736,6 +759,7 @@ func (s *Stakers) SetStakerInfos(sInfos StakerInfos, version uint64) {
 	s.Locker.Unlock()
 }
 
+// GetStakerBalances returns a map of staker indices to their balances.
 func (s *Stakers) GetStakerBalances() map[uint32]uint64 {
 	s.Locker.RLock()
 	defer s.Locker.RUnlock()
@@ -746,6 +770,7 @@ func (s *Stakers) GetStakerBalances() map[uint32]uint64 {
 	return ret
 }
 
+// Update updates the staker infos by adding and removing, and sets the new version.
 func (s *Stakers) Update(sInfosAdd, sInfosRemove StakerInfos, nextVersion, latestVersion uint64) error {
 	s.Locker.Lock()
 	defer s.Locker.Unlock()
@@ -759,31 +784,67 @@ func (s *Stakers) Update(sInfosAdd, sInfosRemove StakerInfos, nextVersion, lates
 	return nil
 }
 
+// ApplyBalanceChanges applies balance changes from RawDataNST to the staker infos.
 func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST) error {
 	s.Locker.Lock()
 	defer s.Locker.Unlock()
+	// Check version match before applying changes
 	if s.Version != changes.Version {
 		return fmt.Errorf("version mismatch, current:%d, next:%d", s.Version, changes.Version)
 	}
+	// Prepare to track stakers to remove and those to update
 	removed := make([]uint32, 0)
+	updated := make(map[uint32]*StakerInfo)
 	for _, change := range changes.NstBalanceChanges {
 		sInfo, exists := s.SInfos[uint32(change.StakerIndex)]
 		if !exists {
 			return fmt.Errorf("stakerIndex not found, staker-index:%d", change.StakerIndex)
 		}
 		if change.Balance == 0 {
-			// remove this staker
+			// Mark this staker for removal if their balance is zero
 			removed = append(removed, change.StakerIndex)
 		} else {
-			sInfo.Balance = change.Balance
+			// Prepare an updated copy of the staker info with the new balance
+			tmp := *sInfo // shallow copy is safe since Validators is not changed
+			tmp.Balance = change.Balance
+			updated[uint32(change.StakerIndex)] = &tmp
 		}
 	}
-	//TODO: handle the removed stakers
+	// Handle the removed stakers if any
+	if len(removed) > 0 {
+		// The following logic rotates the staker list to remove the specified indices
+		tmp := oraclecommon.NewCaches()
+		tmpChainID := uint64(1)
+		revertIndex := make(map[string]uint32)
+		tmpList := make([]string, len(s.SInfos))
+		for sIdx, sInfo := range s.SInfos {
+			revertIndex[sInfo.Address] = sIdx
+			tmpList[int(sIdx)] = sInfo.Address
+		}
+		// Set the staker list in the cache for rotation
+		tmp.SetNSTStakerList(tmpChainID, tmpList)
+		// Rotate the staker list to remove the specified stakers
+		updatedAfterRotate, err := tmp.RotateStakerList(tmpChainID, removed)
+		if err != nil {
+			return err
+		}
 
+		// Update the SInfos map to reflect the rotated staker list
+		for sIdx, address := range updatedAfterRotate {
+			s.SInfos[sIdx] = s.SInfos[revertIndex[address]]
+			delete(s.SInfos, revertIndex[address])
+		}
+	}
+	// Apply all balance updates for stakers that remain
+	for sIdx, sInfo := range updated {
+		s.SInfos[sIdx] = sInfo
+	}
+	// Increment the version after successful application
 	s.Version++
 	return nil
 }
 
+// Reset resets the staker infos to the provided list and version.
 func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version uint64, all bool) error {
 	s.Locker.Lock()
 	defer s.Locker.Unlock()
@@ -830,6 +891,7 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version uint64, all bo
 	return nil
 }
 
+// ConvertHexToIntStr converts a hex string to its integer string representation.
 func ConvertHexToIntStr(hexStr string) (string, error) {
 	vBytes, err := hexutil.Decode(hexStr)
 	if err != nil {
@@ -838,6 +900,7 @@ func ConvertHexToIntStr(hexStr string) (string, error) {
 	return new(big.Int).SetBytes(vBytes).String(), nil
 }
 
+// ConvertBytesToIntStr converts a byte string to its integer string representation.
 func ConvertBytesToIntStr(bytesStr string) string {
 	return new(big.Int).SetBytes([]byte(bytesStr)).String()
 }
