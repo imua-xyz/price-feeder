@@ -17,21 +17,24 @@ const (
 	subStr                       = `{"jsonrpc":"2.0","method":"subscribe","id":0,"params":{"query":"%s"}}`
 	reconnectInterval            = 3
 	maxRetry                     = 600
-	success                      = "success"
+	updated                      = "true"
 	eNewBlock         eventQuery = "tm.event='NewBlock'"
-	eTxUpdatePrice    eventQuery = "tm.event='Tx' AND create_price.price_update='success'"
-	eTxNativeToken    eventQuery = "tm.event='Tx' AND create_price.native_token_update='update'"
+	eTxUpdatePrice    eventQuery = "tm.event='Tx' AND create_price.price_update='true'"
+	eTxNSTBalance     eventQuery = "tm.event='Tx' AND create_price.nst_balance_update='true'"
+	eTxNSTPiece       eventQuery = "tm.event='Tx' AND create_price.nst_piece_update='true'"
 )
 
 var (
 	subNewBlock      subEvent = subEvent(fmt.Sprintf(subStr, eNewBlock))
 	subTxUpdatePrice subEvent = subEvent(fmt.Sprintf(subStr, eTxUpdatePrice))
-	subTxNativeToken subEvent = subEvent(fmt.Sprintf(subStr, eTxNativeToken))
+	subTxNSTBalance  subEvent = subEvent(fmt.Sprintf(subStr, eTxNSTBalance))
+	subTxNSTPiece    subEvent = subEvent(fmt.Sprintf(subStr, eTxNSTPiece))
 
 	events = map[subEvent]bool{
 		subNewBlock:      true,
 		subTxUpdatePrice: true,
-		subTxNativeToken: true,
+		subTxNSTBalance:  true,
+		subTxNSTPiece:    true,
 	}
 )
 
@@ -82,12 +85,12 @@ func (ec *imuaClient) startTasks() {
 	ec.logger.Info("establish ws connection")
 	if err := ec.connectWs(maxRetry); err != nil {
 		// continue
-		panic(fmt.Sprintf("failed to create ws connection after maxRetry:%d, error:%w", maxRetry, err))
+		panic(fmt.Sprintf("failed to create ws connection after maxRetry:%d, error:%s", maxRetry, err.Error()))
 	}
 	ec.markWsActive()
 	ec.logger.Info("subscribe to ws publish", "events", events)
 	if err := ec.sendAllSubscribeMsgs(maxRetry); err != nil {
-		panic(fmt.Sprintf("failed to send subscribe messages after maxRetry:%d, error:%w", maxRetry, err))
+		panic(fmt.Sprintf("failed to send subscribe messages after maxRetry:%d, error:%s", maxRetry, err.Error()))
 	}
 
 	// start routine to send ping messages
@@ -205,7 +208,7 @@ func (ec imuaClient) sendAllSubscribeMsgs(maxRetry int) error {
 		time.Sleep(2 * time.Second)
 	}
 	if !allSet {
-		return errors.New(fmt.Sprintf("failed to send all subscribe messages, events:%v", events))
+		return fmt.Errorf("failed to send all subscribe messages, events:%v", events)
 	}
 	return nil
 }
@@ -294,11 +297,10 @@ func (ec imuaClient) startReadRoutine() bool {
 						break
 					}
 					ec.wsEventsCh <- event
-				case eTxNativeToken:
-					// update validator list for staker
-					event, err := response.GetEventUpdateNST()
+				case eTxNSTPiece:
+					event, err := response.GetEventNSTPiece()
 					if err != nil {
-						ec.logger.Error("failed to get nativeToken event from event-response", "response", response, "error", err)
+						ec.logger.Error("failed to get rawdataPiece event from event-response", "response", response, "error", err)
 						break
 					}
 					ec.wsEventsCh <- event
@@ -312,7 +314,7 @@ func (ec imuaClient) startReadRoutine() bool {
 }
 
 func resetEvents() {
-	for event, _ := range events {
+	for event := range events {
 		events[event] = true
 	}
 }

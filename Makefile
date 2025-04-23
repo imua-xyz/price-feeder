@@ -41,4 +41,8 @@ release:
 build:
 	go build -ldflags "$(LDFLAGS)" -o ./build/price-feeder
 
+build-devmode:
+	go build -ldflags "$(LDFLAGS)" --tags devmode -o ./build/price-feeder
+
+
 .PHONY: build

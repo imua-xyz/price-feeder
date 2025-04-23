@@ -2,6 +2,7 @@ package imuaclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 )
 
 // SendTx signs a create-price transaction and send it to imuad
-func (ec imuaClient) SendTx(feederID uint64, baseBlock uint64, price fetchertypes.PriceInfo, nonce int32) (*sdktx.BroadcastTxResponse, error) {
+func (ec imuaClient) SendTx(feederID, baseBlock uint64, price fetchertypes.PriceInfo, nonce int32) (*sdktx.BroadcastTxResponse, error) {
 	msg, txBytes, err := ec.getSignedTxBytes(feederID, baseBlock, price, nonce)
 	if err != nil {
 		return nil, err
@@ -37,7 +38,26 @@ func (ec imuaClient) SendTx(feederID uint64, baseBlock uint64, price fetchertype
 	return res, nil
 }
 
-func (ec imuaClient) SendTxDebug(feederID uint64, baseBlock uint64, price fetchertypes.PriceInfo, nonce int32) (*coretypes.ResultBroadcastTxCommit, error) {
+func (ec imuaClient) SendTx2Phases(feederID, baseBlock uint64, prices []*fetchertypes.PriceInfo, phase oracletypes.AggregationPhase, nonce int32) (*sdktx.BroadcastTxResponse, error) {
+	msg, txBytes, err := ec.getSignedTxBytes2Phases(feederID, baseBlock, prices, phase, nonce)
+	if err != nil {
+		return nil, err
+	}
+	res, err := ec.txClient.BroadcastTx(
+		context.Background(),
+		&sdktx.BroadcastTxRequest{
+			Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC,
+			TxBytes: txBytes,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to braodcast transaction, msg:%v, valConsAddr:%s, error:%w", msg, sdk.ConsAddress(ec.pubKey.Address()), err)
+	}
+
+	return res, nil
+}
+
+func (ec imuaClient) SendTxDebug(feederID, baseBlock uint64, price fetchertypes.PriceInfo, nonce int32) (*coretypes.ResultBroadcastTxCommit, error) {
 	msg, txBytes, err := ec.getSignedTxBytes(feederID, baseBlock, price, nonce)
 	if err != nil {
 		return nil, err
@@ -126,18 +146,84 @@ func (ec imuaClient) getSignedTxBytes(feederID uint64, baseBlock uint64, price f
 		baseBlock,
 		nonce,
 	)
+	signedTxBytes, err := ec.getSignedTxBytesFromMsg(msg)
+	return msg, signedTxBytes, err
+}
 
+func (ec imuaClient) getSignedTxBytes2Phases(feederID, baseBlock uint64, prices []*fetchertypes.PriceInfo, phase oracletypes.AggregationPhase, nonce int32) (*oracletypes.MsgCreatePrice, []byte, error) {
+	var msg *oracletypes.MsgCreatePrice
+	if phase == oracletypes.AggregationPhaseOne {
+		if len(prices) != 1 {
+			return nil, nil, errors.New("1st-phase message should include one and only one price info represents rootHash and leaf count")
+		}
+		price := prices[0]
+		msg = oracletypes.NewMsgCreatePrice2Phase(
+			sdk.AccAddress(ec.pubKey.Address()).String(),
+			feederID,
+			[]*oracletypes.PriceSource{
+				{
+					SourceID: Chainlink,
+					Prices: []*oracletypes.PriceTimeDetID{
+						{
+							Price:     price.Price,
+							Decimal:   price.Decimal,
+							Timestamp: time.Now().UTC().Format(feedertypes.TimeLayout),
+							DetID:     price.RoundID,
+						},
+					},
+					Desc: "",
+				},
+			},
+			baseBlock,
+			nonce,
+		)
+		signedTxBytes, err := ec.getSignedTxBytesFromMsg(msg)
+		return msg, signedTxBytes, err
+	}
+	if phase != oracletypes.AggregationPhaseTwo {
+		return nil, nil, errors.New("invalid aggregation phase, only support 1st-phase and 2nd-phase")
+	}
+	if len(prices) < 1 || len(prices) > 2 {
+		return nil, nil, errors.New("2nd-phase message should include one or two price infos")
+	}
+	pss := []*oracletypes.PriceSource{
+		{
+			SourceID: Chainlink,
+			Prices:   []*oracletypes.PriceTimeDetID{},
+			Desc:     "",
+		},
+	}
+	for _, price := range prices {
+		pss[0].Prices = append(pss[0].Prices, &oracletypes.PriceTimeDetID{
+			Price: price.Price,
+			//			Decimal:   price.Decimal,
+			Timestamp: time.Now().UTC().Format(feedertypes.TimeLayout),
+			DetID:     price.RoundID,
+		})
+	}
+	msg = oracletypes.NewMsgCreatePrice2Phase2(
+		sdk.AccAddress(ec.pubKey.Address()).String(),
+		feederID,
+		pss,
+		baseBlock,
+		nonce,
+	)
+	signedTxBytes, err := ec.getSignedTxBytesFromMsg(msg)
+	return msg, signedTxBytes, err
+}
+
+func (ec imuaClient) getSignedTxBytesFromMsg(msg *oracletypes.MsgCreatePrice) ([]byte, error) {
 	// sign the message with validator consensus-key configured
 	signedTx, err := ec.signMsg(msg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to sign message, msg:%v, valConsAddr:%s, error:%w", msg, sdk.ConsAddress(ec.pubKey.Address()), err)
+		return nil, fmt.Errorf("failed to sign message, msg:%v, valConsAddr:%s, error:%w", msg, sdk.ConsAddress(ec.pubKey.Address()), err)
 	}
 
 	// encode transaction to broadcast
 	txBytes, err := ec.txCfg.TxEncoder()(signedTx)
 	if err != nil {
 		// this should not happen
-		return nil, nil, fmt.Errorf("failed to encode singedTx, txBytes:%b, msg:%v, valConsAddr:%s, error:%w", txBytes, msg, sdk.ConsAddress(ec.pubKey.Address()), err)
+		return nil, fmt.Errorf("failed to encode singedTx, txBytes:%b, msg:%v, valConsAddr:%s, error:%w", txBytes, msg, sdk.ConsAddress(ec.pubKey.Address()), err)
 	}
-	return msg, txBytes, nil
+	return txBytes, nil
 }

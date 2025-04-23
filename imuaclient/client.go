@@ -51,7 +51,6 @@ type imuaClient struct {
 	wsActive         *bool
 	// wsEventsCh       chan EventRes
 	wsEventsCh chan EventInf
-
 	// client to query from imuad
 	oracleClient oracletypes.QueryClient
 }
