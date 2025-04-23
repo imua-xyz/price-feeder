@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	query "github.com/cosmos/cosmos-sdk/types/query"
 	oracleTypes "github.com/imua-xyz/imuachain/x/oracle/types"
 )
 
@@ -27,15 +28,35 @@ func (ec imuaClient) GetLatestPrice(tokenID uint64) (oracleTypes.PriceTimeRound,
 
 }
 
-// TODO: pagination
 // GetStakerInfos get all stakerInfos for the assetID
 func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, uint64, error) {
-	// TODO(leonz): pagination
-	stakerInfoRes, err := ec.oracleClient.StakerInfos(context.Background(), &oracleTypes.QueryStakerInfosRequest{AssetId: assetID})
-	if err != nil {
-		return []*oracleTypes.StakerInfo{}, 0, fmt.Errorf("failed to get stakerInfos from oracleClient, error:%w", err)
+	reqPage := &query.PageRequest{
+		Key:        []byte{},
+		Offset:     0,
+		Limit:      100,
+		CountTotal: false,
+		Reverse:    false,
 	}
-	return stakerInfoRes.StakerInfos, uint64(stakerInfoRes.Version), nil
+	var ret []*oracleTypes.StakerInfo
+	var version uint64
+	for reqPage.Key != nil {
+		stakerInfoRes, err := ec.oracleClient.StakerInfos(context.Background(), &oracleTypes.QueryStakerInfosRequest{AssetId: assetID, Pagination: reqPage})
+		if err != nil {
+			return []*oracleTypes.StakerInfo{}, 0, fmt.Errorf("failed to get stakerInfos from oracleClient, error:%w", err)
+		}
+		ret = append(ret, stakerInfoRes.StakerInfos...)
+		if version == 0 {
+			version = uint64(stakerInfoRes.Version)
+		} else if version != uint64(stakerInfoRes.Version) {
+			// version has changed during the query
+			version = 0
+			ret = nil
+			reqPage.Key = nil
+			continue
+		}
+		reqPage.Key = stakerInfoRes.Pagination.NextKey
+	}
+	return ret, version, nil
 }
 
 // GetStakerInfos get the stakerInfos corresponding to stakerAddr for the assetID
