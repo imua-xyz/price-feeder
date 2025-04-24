@@ -63,8 +63,6 @@ func (p *proxy) addToken(tokens map[string]string) error {
 // addClient adds an ethClient, it will skip if the network exists in current clients
 // does not need to be guard by lock
 func (p *proxy) addClient(network, url string) error {
-	//	p.locker.Lock()
-	//	defer p.locker.Unlock()
 	var err error
 	if _, ok := p.clients[network]; !ok {
 		if len(url) == 0 {
