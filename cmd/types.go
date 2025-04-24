@@ -701,6 +701,7 @@ func (f *feeder) start() {
 							if err != nil {
 								f.lastSent.revertNonce(roundID)
 								f.logger.Error("failed to send tx submitting price", "price", price, "nonce", nonce, "baseBlock", baseBlock, "delta", delta, "feeder", f.Info(), "error_feeder", err)
+								continue
 							}
 							if txResponse := res.GetTxResponse(); txResponse.Code == statusOk {
 								f.logger.Info("sent tx to submit price", "price", price, "nonce", nonce, "baseBlock", baseBlock, "delta", delta)
