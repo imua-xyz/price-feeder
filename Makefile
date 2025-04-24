@@ -12,6 +12,7 @@ LDFLAGS := -X github.com/imua-xyz/price-feeder/version.Version=$(VERSION) \
 
 release-dry-run:
 	docker run \
+		-e GOPROXY=https://proxy.golang.org,direct \
 		--rm \
 		--privileged \
 		-e CGO_ENABLED=1 \
