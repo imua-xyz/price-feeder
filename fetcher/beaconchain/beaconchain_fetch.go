@@ -21,10 +21,7 @@ import (
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
-const (
-	proxyAddressHex = "0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172"
-	// bootstrapStorageABI = `[{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"ownerToCapsule","outputs":[{"name":"","type":"address"}],"payable":false,"stateMutability":"view","type":"function"}]`
-)
+const proxyAddressHex = "0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172"
 
 // Helper to get capsule balance
 func getCapsuleBalance(ethClient *ethclient.Client, capsuleAddr string, blockNumber *big.Int) (*big.Int, error) {

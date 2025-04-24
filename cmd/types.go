@@ -654,7 +654,7 @@ func (f *feeder) start() {
 					} else {
 						if price.IsZero() {
 							f.logger.Info("got nil latest price, skip submitting price", "roundID", roundID, "delta", delta)
-							f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
+							f.logger.Debug("got latestprice equal to local cache", "feeder", f.Info())
 							continue
 						}
 
@@ -662,7 +662,7 @@ func (f *feeder) start() {
 							_, rootHash := f.AddRawData(roundID, []byte(price.Price), f.twoPhasesPieceSize)
 							if bytes.Equal(rootHash, []byte(f.lastPrice.price.Price)) {
 								f.logger.Info("didn't submit price for 1st-phase of 2phases due to price not changed", "roundID", roundID, "delta", delta, "price", price)
-								f.logger.Debug("got latsetprice(rootHash) equal to local cache", "feeder", f.Info())
+								f.logger.Debug("got latesttprice(rootHash) equal to local cache", "feeder", f.Info())
 								continue
 							}
 						} else {
@@ -673,7 +673,7 @@ func (f *feeder) start() {
 							}
 							if !f.priceChanged(&price) {
 								f.logger.Info("didn't submit price due to price not changed", "roundID", roundID, "delta", delta, "price", price)
-								f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
+								f.logger.Debug("got latestprice equal to local cache", "feeder", f.Info())
 								continue
 							}
 						}
@@ -689,6 +689,8 @@ func (f *feeder) start() {
 									tmp = append(tmp, root...)
 									tmp = append(tmp, countBytes...)
 									price.Price = string(tmp)
+									// for imuachain validation on oracle price-feed messages
+									price.Decimal = f.decimal
 									f.logger.Info("phase 1 message of 2phases feeder", "rootHash", hex.EncodeToString(root), "piece_count", count, "roundID", price.RoundID)
 									res, err = f.submitter.SendTx2Phases(uint64(f.feederID), baseBlock, []*fetchertypes.PriceInfo{&price}, oracletypes.AggregationPhaseOne, nonce)
 								} else {
@@ -1173,5 +1175,3 @@ func convertDecimal(price string, decimalFrom, decimalTo int32) string {
 	}
 	return price
 }
-
-// from: 5 to 1
