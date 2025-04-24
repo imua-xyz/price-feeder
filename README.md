@@ -74,12 +74,12 @@ url:
 ## Debug
 We provide command-line tools for sending price quote transactions manually through an interactive interface
 ### send tx immedidately
-`pricefeeder --config path/to/config debug send-imm --feederID [1] '{"base_block":160,"nonce":2,"price":"99907000000","det_id":"123","decimal":8,"timestamp":"2024-12-27 15:16:17"}'`
+`pricefeeder --config path/to/config/config.yaml debug send-imm --feederID [1] '{"base_block":160,"nonce":2,"price":"99907000000","det_id":"123","decimal":8,"timestamp":"2024-12-27 15:16:17"}'`
 ### send tx on specified height
-`pricefeeder --config path/to/config debug`
+`pricefeeder --config path/to/config/config.yaml debug`
 
 This will start a grpc service to monitor the heighs change of imuachain, and serves the 'send create-price tx' request
 
-`pricefeeder --config path/to/config debug send --feederID [1] --height [160] '{"base_block":160,"nonce":2,"price":"99907000000","det_id":"123","decimal":8,"timestamp":"2024-12-27 15:16:17"}'`
+`pricefeeder --config path/to/config/config.yaml debug send --feederID [1] --height [160] '{"base_block":160,"nonce":2,"price":"99907000000","det_id":"123","decimal":8,"timestamp":"2024-12-27 15:16:17"}'`
 
 The command will send the request of 'sending a creat-price tx on specified height' to the grpc server started.

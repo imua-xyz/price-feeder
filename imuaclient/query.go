@@ -29,12 +29,13 @@ func (ec imuaClient) GetLatestPrice(tokenID uint64) (oracleTypes.PriceTimeRound,
 
 // TODO: pagination
 // GetStakerInfos get all stakerInfos for the assetID
-func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, int64, error) {
+func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, uint64, error) {
+	// TODO(leonz): pagination
 	stakerInfoRes, err := ec.oracleClient.StakerInfos(context.Background(), &oracleTypes.QueryStakerInfosRequest{AssetId: assetID})
 	if err != nil {
 		return []*oracleTypes.StakerInfo{}, 0, fmt.Errorf("failed to get stakerInfos from oracleClient, error:%w", err)
 	}
-	return stakerInfoRes.StakerInfos, stakerInfoRes.Version, nil
+	return stakerInfoRes.StakerInfos, uint64(stakerInfoRes.Version), nil
 }
 
 // GetStakerInfos get the stakerInfos corresponding to stakerAddr for the assetID

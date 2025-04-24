@@ -29,11 +29,13 @@ type Fetcher struct {
 	running bool
 	sources map[string]types.SourceInf
 	// source->map{token->price}
-	priceReadList  map[string]map[string]*types.PriceSync
-	addSourceToken chan *addTokenForSourceReq
-	getLatestPrice chan *getLatestPriceReq
-	stop           chan struct{}
+	priceReadList   map[string]map[string]*types.PriceSync
+	addSourceToken  chan *addTokenForSourceReq
+	getLatestPrice  chan *getLatestPriceReq
+	setNSTStakersCh chan *setNSTStakersReq
+	stop            chan struct{}
 }
+
 type addTokenForSourceReq struct {
 	source string
 	token  string
@@ -45,9 +47,16 @@ type getLatestPriceReq struct {
 	token  string
 	result chan *getLatestPriceRes
 }
+
 type getLatestPriceRes struct {
 	price types.PriceInfo
 	err   error
+}
+
+type setNSTStakersReq struct {
+	sourceName string
+	sInfos     types.StakerInfos
+	version    uint64
 }
 
 func newGetLatestPriceReq(source, token string) (*getLatestPriceReq, chan *getLatestPriceRes) {
@@ -63,8 +72,9 @@ func NewFetcher(logger feedertypes.LoggerInf, sources map[string]types.SourceInf
 		priceReadList:  make(map[string]map[string]*types.PriceSync),
 		addSourceToken: make(chan *addTokenForSourceReq, 5),
 		// getLatestPrice: make(chan *getLatestPriceReq),
-		getLatestPrice: make(chan *getLatestPriceReq, 5),
-		stop:           make(chan struct{}),
+		getLatestPrice:  make(chan *getLatestPriceReq, 5),
+		setNSTStakersCh: make(chan *setNSTStakersReq, 10),
+		stop:            make(chan struct{}),
 	}
 }
 
@@ -88,6 +98,10 @@ func (f *Fetcher) AddTokenForSourceUnBlocked(source, token string) {
 		token:  token,
 		result: res,
 	}
+}
+
+func (f *Fetcher) SetNSTStakers(sourceName string, sInfos types.StakerInfos, version uint64) {
+	f.setNSTStakersCh <- &setNSTStakersReq{sourceName: sourceName, sInfos: sInfos, version: version}
 }
 
 // GetLatestPrice return the queried price for the token from specified source
@@ -120,7 +134,7 @@ func (f *Fetcher) Start() error {
 	f.locker.Unlock()
 
 	go func() {
-		const timeout = 5 * time.Second
+		const timeout = 10 * time.Second
 		for {
 			select {
 			case req := <-f.addSourceToken:
@@ -171,6 +185,22 @@ func (f *Fetcher) Start() error {
 							err:   nil,
 						}
 					}
+				}
+			case req := <-f.setNSTStakersCh:
+				timer := time.NewTimer(timeout)
+				select {
+				case <-timer.C:
+					f.logger.Error("timeout while setting NST stakers", "version", req.version)
+				default:
+					s, ok := f.sources[req.sourceName]
+					if !ok {
+						f.logger.Error("failed to set NST stakers for a nonexistent source", "source", req.sourceName)
+					}
+					sNST, ok := s.(types.SourceNSTInf)
+					if !ok {
+						f.logger.Error("failed to set NST stakers for a source which doesn't support NST stakers", "source", req.sourceName)
+					}
+					sNST.SetNSTStakers(req.sInfos, req.version)
 				}
 			case <-f.stop:
 				f.locker.Lock()

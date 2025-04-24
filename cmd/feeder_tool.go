@@ -11,23 +11,22 @@ import (
 	"github.com/imua-xyz/price-feeder/types"
 
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
-	"github.com/imua-xyz/price-feeder/fetcher/beaconchain"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
 type RetryConfig struct {
 	MaxAttempts int
+	Attempts    int
 	Interval    time.Duration
 }
 
 // DefaultRetryConfig provides default retry settings
 var DefaultRetryConfig = RetryConfig{
 	MaxAttempts: 43200, // defaultMaxRetry
+	Attempts:    5,
 	Interval:    2 * time.Second,
 }
-
-// var updateConfig sync.Mutex
 
 // RunPriceFeeder runs price feeder to fetching price and feed to imuachain
 func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnemonic string, sourcesPath string, standalone bool) {
@@ -40,7 +39,6 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 		logger.Error("failed to initialize components")
 		panic(err)
 	}
-	// initComponents(logger, conf, standalone)
 
 	f, _ := fetcher.GetFetcher()
 	// start fetching on all supported sources and tokens
@@ -62,37 +60,104 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 	feeders := NewFeeders(feedertypes.GetLogger("feeders"), f, ecClient)
 	// we don't check empty tokenfeeders list
 	maxNonce := oracleP.MaxNonce
+	pieceSize := oracleP.PieceSizeByte
+	twoPhasesFeeders := make(map[int]string)
 	for feederID, feeder := range oracleP.TokenFeeders {
 		if feederID == 0 {
 			continue
 		}
 		tokenName := strings.ToLower(oracleP.Tokens[feeder.TokenID].Name)
-		source := fetchertypes.Chainlink
+		sourceName := fetchertypes.Chainlink
+		// TODO(leonz): unify with Rule check
 		if fetchertypes.IsNSTToken(tokenName) {
 			nstToken := fetchertypes.NSTToken(tokenName)
-			if source = fetchertypes.GetNSTSource(nstToken); len(source) == 0 {
+			if sourceName = fetchertypes.GetNSTSource(nstToken); len(sourceName) == 0 {
 				panic(fmt.Sprintf("source of nst:%s is not set", tokenName))
 			}
+			twoPhasesFeeders[feederID] = fetchertypes.GetNSTAssetID(nstToken)
 		} else if !strings.HasSuffix(tokenName, fetchertypes.BaseCurrency) {
 			// NOTE: this is for V1 only
 			tokenName += fetchertypes.BaseCurrency
 		}
-
-		feeders.SetupFeeder(feeder, feederID, source, tokenName, maxNonce)
+		feeders.SetupFeeder(feeder, feederID, sourceName, tokenName, maxNonce, pieceSize, oracleP.IsRule2PhasesByFeederID(uint64(feederID)))
 	}
 	feeders.Start()
+
+	// The InitComponents had done, which means then conenction between price-feeder and imuachain is established, so we don't need too many retries
+	// this is processed before nst-events handling, so it's the only source of chainging for a specific feeder
+	for feederID, assetID := range twoPhasesFeeders {
+		feeder := feeders.feederMap[feederID]
+		if err := ResetNSTStakers(ecClient, assetID, logger, feeder, true); err != nil {
+			panic(fmt.Sprintf("failed to init nst stakers, assetID:%s, error:%s", assetID, err.Error()))
+		}
+		sInfos, version := feeder.stakers.GetStakerInfos()
+		feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, version)
+	}
 
 	for event := range ecClient.EventsCh() {
 		switch e := event.(type) {
 		case *imuaclient.EventNewBlock:
-			if paramsUpdate := e.ParamsUpdate(); paramsUpdate {
+			if e.ParamsUpdate() {
 				oracleP, err = getOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ecClient, logger)
 				if err != nil {
 					logger.Error(fmt.Sprintf("Failed to get oracle params with maxRetry when params update detected, price-feeder will exit, error:%v", err))
 					return
 				}
 				feeders.UpdateOracleParams(oracleP)
-				// TODO: add newly added tokenfeeders if exists
+			}
+			if e.NSTStakersUpdate() {
+				eNSTStakers := e.NSTStakers()
+				feederIDs := make([]uint64, 0, len(eNSTStakers))
+				for feederID, update := range eNSTStakers {
+					feederIDs = append(feederIDs, feederID)
+					// do the conversion on imuachain side to unify all NSTs
+					if fetchertypes.NSTToken(feeders.feederMap[int(feederID)].token) == fetchertypes.NativeTokenETH {
+						for _, sInfo := range update[0].SInfos() {
+							for i, validator := range sInfo.Validators {
+								// TODO: error handling
+								validatorIdx := fetchertypes.ConvertBytesToIntStr(validator)
+								sInfo.Validators[i] = validatorIdx
+							}
+						}
+						for _, sInfo := range update[1].SInfos() {
+							for i, validator := range sInfo.Validators {
+								// TODO: error handling
+								validatorIdx := fetchertypes.ConvertBytesToIntStr(validator)
+								sInfo.Validators[i] = validatorIdx
+							}
+						}
+					}
+				}
+				logger.Info("update stakers for nst", "feederIDs", feederIDs)
+				failed := feeders.UpdateNSTStakers(eNSTStakers)
+				for _, f := range failed {
+					logger.Error("failed to update stakerInfos for nst, do resetAll", "feederID", f.feederID, "error", f.err)
+					feeder := feeders.feederMap[int(f.feederID)]
+					// the return error is just logged and waiting for next round to update for those nsts which failed to reset their staker infos
+					err = ResetNSTStakers(ecClient, fetchertypes.GetNSTAssetID(fetchertypes.NSTToken(feeder.token)), logger, feeder, true)
+					if err != nil {
+						logger.Error("failed to resetAll nst stakers for fail updating", "feederID", f.feederID, "error", err)
+					} else {
+						sInfos, version := feeder.stakers.GetStakerInfos()
+						feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, version)
+					}
+				}
+			} else if e.NSTBalancesUpdate() {
+				// balance update and stakers update will not happen in the same block
+				eNSTBalances := e.NSTBalances()
+				failed := feeders.UpdateNSTBalances(eNSTBalances)
+				for _, f := range failed {
+					logger.Error("failed to update stakerInfos for nst, do resetAll", "feederID", f.feederID, "error", f.err)
+					feeder := feeders.feederMap[int(f.feederID)]
+					// the return error is just logged and waiting for next round to update for those nsts which failed to reset their staker infos
+					err = ResetNSTStakers(ecClient, fetchertypes.GetNSTAssetID(fetchertypes.NSTToken(feeder.token)), logger, feeder, true)
+					if err != nil {
+						logger.Error("failed to resetAll nst stakers for fail updating", "feederID", f.feederID, "error", err)
+					} else {
+						sInfos, version := feeder.stakers.GetStakerInfos()
+						feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, version)
+					}
+				}
 			}
 			feeders.Trigger(e.Height(), e.FeederIDs())
 		case *imuaclient.EventUpdatePrice:
@@ -116,31 +181,10 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 			}
 			logger.Info("sync local price from event", "prices", syncPriceInfo)
 			feeders.UpdatePrice(e.TxHeight(), finalPrices)
-		case imuaclient.EventUpdateNSTs:
-			addList, removeList, nextVersion, latestVersion := e.Parse()
-			// NOTE: for v1, beaconchain only:
-			var err error
-			addList, err = beaconchain.ConvertHexToIntStrForMap(addList)
-			if err != nil {
-				logger.Error("failed to convert hex to int for staker's validator list", "error", err)
-				break
-			}
-			removeList, err = beaconchain.ConvertHexToIntStrForMap(removeList)
-			if err != nil {
-				logger.Error("failed to convert hex to int for staker's validator list", "error", err)
-				break
-			}
-			if err := beaconchain.UpdateStakerValidators(addList, removeList, nextVersion, latestVersion); err != nil {
-				logger.Error("failed to update staker's validator list", "nextVersion", nextVersion, "latestVersion", latestVersion, "addList", addList, "removeList", removeList, "error", err)
-				// try to reset all validatorList
-				if err := ResetAllStakerValidators(ecClient, logger); err != nil {
-					logger.Error("failed to reset all staker's validators for native-restaking-eth", "error", err)
-				} else {
-					logger.Info("reset all staker's validators for native-restaking-eth")
-				}
-			} else {
-				logger.Info("updated Staker validator list for beaconchain fetcher", "stakerID", addList, "nextVersion", nextVersion, "latestVersion", latestVersion)
-			}
+		case imuaclient.EventNSTBalances:
+			feeders.UpdateNSTBalances(e)
+		case imuaclient.EventNSTPieces:
+			feeders.UpdateNSTPieces(e)
 		}
 	}
 }
@@ -162,20 +206,39 @@ func getOracleParamsWithMaxRetry(maxRetry int, ecClient imuaclient.ImuaClientInf
 	return
 }
 
-func ResetAllStakerValidators(ec imuaclient.ImuaClientInf, logger feedertypes.LoggerInf) error {
-	stakerInfos, version, err := ec.GetStakerInfos(fetchertypes.GetNSTAssetID(fetchertypes.NativeTokenETH))
-	if err != nil {
-		return fmt.Errorf("failed to get stakerInfos for native-restaking-eth, error:%w", err)
-	}
-	if len(stakerInfos) > 0 {
-		if err := beaconchain.ResetStakerValidators(stakerInfos, version, true); err != nil {
-			return fmt.Errorf("failed to set stakerInfs for native-restaking-eth, error:%w", err)
+// func ResetAllStakerValidators(ec imuaclient.ImuaClientInf, feederID uint64, assetID string, logger feedertypes.LoggerInf, fs *Feeders) error {
+func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedertypes.LoggerInf, feeder *feeder, all bool) error {
+	count := 0
+	for count < DefaultRetryConfig.Attempts {
+		stakerInfos, version, err := ec.GetStakerInfos(assetID)
+		if err != nil {
+			logger.Error("failed to get stakerInfos for native-restaking-token", "feederID", feeder.feederID, "token", feeder.token, "error", err)
+			count++
+			continue
 		}
+
+		if fetchertypes.NSTToken(feeder.token) == fetchertypes.NativeTokenETH {
+			// beaconchain use hex validators index instead of validator pubkey
+			// TODO: do this conversion on imuachain side
+			for _, sInfo := range stakerInfos {
+				for i, validator := range sInfo.ValidatorPubkeyList {
+					// TODO: error handling
+					validatorIdx, _ := fetchertypes.ConvertHexToIntStr(validator)
+					sInfo.ValidatorPubkeyList[i] = validatorIdx
+				}
+			}
+		}
+		if err := feeder.stakers.Reset(stakerInfos, version, all); err != nil {
+			logger.Error("failed to update stakers for native-restaking-token", "feederID", feeder.feederID, "token", feeder.token, "error", err)
+			count++
+			continue
+		}
+		return nil
 	}
-	return nil
+	return fmt.Errorf("failed to ResetAllStakerValidators after maxRetry:%d, feederID:%d, assetID:%s", DefaultRetryConfig.Attempts, feeder.feederID, assetID)
 }
 
-// // initComponents, initialize fetcher, imuaclient, it will panic if any initialization fialed
+// initComponents, initialize fetcher, imuaclient, it will panic if any initialization fialed
 func initComponents(logger types.LoggerInf, conf *types.Config, sourcesPath string, standalone bool) error {
 	count := 0
 	for count < DefaultRetryConfig.MaxAttempts {
@@ -202,11 +265,6 @@ func initComponents(logger types.LoggerInf, conf *types.Config, sourcesPath stri
 		_, err = getOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ec, logger)
 		if err != nil {
 			return fmt.Errorf("failed to get oracle params on start, error:%w", err)
-		}
-
-		// init native stakerlist for nstETH(beaconchain)
-		if err := ResetAllStakerValidators(ec, logger); err != nil {
-			return fmt.Errorf("failed in initialize nst:%w", err)
 		}
 
 		logger.Info("Initialization for price-feeder done")
