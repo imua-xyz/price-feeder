@@ -58,6 +58,7 @@ type imuaClient struct {
 // NewImuaClient creates a imua-client used to do queries and send transactions to imuad
 func NewImuaClient(logger feedertypes.LoggerInf, endpoint, wsEndpoint, endpointDebug string, privKey cryptotypes.PrivKey, encCfg params.EncodingConfig, chainID string, txOnly bool) (*imuaClient, error) {
 	ec := &imuaClient{
+		chainID:          chainID,
 		logger:           logger,
 		privKey:          privKey,
 		pubKey:           privKey.PubKey(),

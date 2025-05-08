@@ -1215,8 +1215,8 @@ github.com/ledgerwatch/erigon-lib v0.0.0-20230210071639-db0e7ed11263 h1:LGEzZvf3
 github.com/ledgerwatch/erigon-lib v0.0.0-20230210071639-db0e7ed11263/go.mod h1:OXgMDuUo2lZ3NpH29ZvMYbk+LxFd5ffDl2Z2mGMuY/I=
 github.com/leodido/go-urn v1.2.4 h1:XlAE/cm/ms7TE/VMVoduSpNBoyc2dOxHs5MZSwAN63Q=
 github.com/leodido/go-urn v1.2.4/go.mod h1:7ZrI8mTSeBSHl/UaRyKQW1qZeMgak41ANeCNaVckg+4=
-github.com/leonz789/exocore v0.0.0-20250331005743-f3ea2f2ef084 h1:V40TmnIFHB2/oz3IbNgyghx923SvmJ34CEPbe6dMLS4=
-github.com/leonz789/exocore v0.0.0-20250331005743-f3ea2f2ef084/go.mod h1:x3xTKxbHYXthJdWwhdYHiB2JVL5IMEGZwxTNeBQzPw0=
+github.com/leonz789/exocore v0.0.0-20250421062336-f76733c1bab6 h1:YRBx9l7m42E2gH/7mxVxGlll1gibL2Vq9IvI0M7zVvw=
+github.com/leonz789/exocore v0.0.0-20250421062336-f76733c1bab6/go.mod h1:GmpEoEjmWLkNXJoWUpNr/mH4PX76pBrIEC7n25Vo73U=
 github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
 github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/libp2p/go-buffer-pool v0.1.0 h1:oK4mSFcQz7cTQIfqbe4MIj9gLW+mnanjyFtc6cdF0Y8=

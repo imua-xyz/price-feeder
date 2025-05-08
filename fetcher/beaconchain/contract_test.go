@@ -1,3 +1,13 @@
+// contract_test.go
+//
+// This file contains integration tests for cross-layer contract and beacon chain queries.
+// It demonstrates how to:
+//   - Query the finalized EL block number, CL slot, and stateRoot from a beacon node
+//   - Use the EL block number for contract calls (e.g., ownerToCapsule, whitelistTokens)
+//   - Use the CL slot/stateRoot for consensus-layer queries (e.g., validator effective balance)
+//
+// These tests are intended for end-to-end validation of cross-layer workflows in the price-feeder project.
+
 package beaconchain
 
 import (
@@ -7,75 +17,18 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 const (
+	// Proxy contract address for BootstrapStorage on Holesky
 	testProxyAddressHex = "0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172"
-	// testEthRpcUrl       = "https://ethereum-holesky.publicnode.com"
-	testEthRpcUrl = "https://rpc.ankr.com/eth_holesky/a5d2626c4027e6d924c870d2558bc774bc995ce917a17a654a92856b3279a586"
+	// Public Holesky Ethereum endpoint
+	testEthRpcUrl = "https://ethereum-holesky.publicnode.com"
 )
 
-func TestGetEpoch(t *testing.T) {
-	//	vidxStr, err := convertHexToIntStr("0x00000000000000000000000000000000000000000000000000000000001CDD66")
-	//	if err != nil {
-	//		panic(err)
-	//	}
-	//	GetValidators([]string{"1", "5", "9"}, 0)
-	validators := []string{
-		//	"0xa1d1ad0714035353258038e964ae9675dc0252ee22cea896825c01458e1807bfad2f9969338798548d9858a571f7425c",
-		//	"0xb2ff4716ed345b05dd1dfc6a5a9fa70856d8c75dcc9e881dd2f766d5f891326f0d10e96f3a444ce6c912b69c22c6754d",
-		"1",
-		//		"5",
-		//		"9",
-		// vidxStr,
-	}
-	urlEndpoint, _ = url.Parse("https://rpc.ankr.com/premium-http/eth_beacon/a5d2626c4027e6d924c870d2558bc774bc995ce917a17a654a92856b3279a586")
-
-	slotsPerEpoch = 32
-
-	epoch, stateRoot, err := getFinalizedEpoch()
-	fmt.Println("stateRoot:", stateRoot, err)
-
-	//GetValidatorsAnkr([]string{"0xa1d1ad0714035353258038e964ae9675dc0252ee22cea896825c01458e1807bfad2f9969338798548d9858a571f7425c"}, stateRoot)
-	//GetValidatorsAnkr([]string{"0xb2ff4716ed345b05dd1dfc6a5a9fa70856d8c75dcc9e881dd2f766d5f891326f0d10e96f3a444ce6c912b69c22c6754d"}, stateRoot)
-	res, err := getValidators(validators, stateRoot, epoch)
-	fmt.Println("result:", res, err)
-}
-
-func convertHexToIntStr(hexStr string) (string, error) {
-	vBytes, err := hexutil.Decode(hexStr)
-	if err != nil {
-		return "", err
-	}
-	return new(big.Int).SetBytes(vBytes).String(), nil
-
-}
-
-// func TestOwnerToCapsuleCall(t *testing.T) {
-// 	stakerAddress := os.Getenv("TEST_STAKER_ADDRESS")
-// 	if stakerAddress == "" {
-// 		stakerAddress = "0x0000000000000000000000000000000000000000"
-// 	}
-//
-// 	client, err := ethclient.Dial(testEthRpcUrl)
-// 	if err != nil {
-// 		t.Fatalf("Failed to connect to Ethereum node: %v", err)
-// 	}
-//
-// 	proxyAddress := common.HexToAddress(testProxyAddressHex)
-// 	owner := common.HexToAddress(stakerAddress)
-// 	blockNumber := big.NewInt(0) // latest
-//
-// 	capsuleAddress, err := CallOwnerToCapsule(client, proxyAddress, bootstrapStorageABI, owner, blockNumber)
-// 	if err != nil {
-// 		t.Fatalf("Failed to call contract: %v", err)
-// 	}
-//
-// 	t.Logf("Capsule address for staker %s: %s", stakerAddress, capsuleAddress.Hex())
-// }
-
+// TestCallWhitelistTokenAt demonstrates how to call the whitelistTokens(uint256) getter
+// on the proxy contract at a specific EL block number.
 func TestCallWhitelistTokenAt(t *testing.T) {
 	client, err := ethclient.Dial(testEthRpcUrl)
 	if err != nil {
@@ -86,6 +39,7 @@ func TestCallWhitelistTokenAt(t *testing.T) {
 	blockNumber := big.NewInt(0) // latest
 	index := big.NewInt(0)       // test the first token
 
+	// If you want to use a specific block, set blockNumber = big.NewInt(elBlockNumber)
 	blockNumber = nil
 	token, err := CallWhitelistTokenAt(client, proxyAddress, bootstrapStorageABI, index, blockNumber)
 	if err != nil {
@@ -95,7 +49,10 @@ func TestCallWhitelistTokenAt(t *testing.T) {
 	t.Logf("Whitelist token at index %d: %s", index.Int64(), token.Hex())
 }
 
+// TestGetFinalizedELBlockNumber demonstrates how to fetch the finalized EL block number,
+// CL slot, and stateRoot from the beacon node.
 func TestGetFinalizedELBlockNumber(t *testing.T) {
+	// Set the beacon endpoint for Holesky
 	urlEndpoint, _ = url.Parse("https://rpc.ankr.com/premium-http/eth_holesky_beacon/a5d2626c4027e6d924c870d2558bc774bc995ce917a17a654a92856b3279a586")
 
 	elBlockNumber, clSlot, stateRoot, err := getFinalizedELBlockNumber()
@@ -108,9 +65,14 @@ func TestGetFinalizedELBlockNumber(t *testing.T) {
 	t.Logf("Finalized EL block number: %d, CL slot: %d, stateRoot: %s", elBlockNumber, clSlot, stateRoot)
 }
 
+// TestCompleteCL_EL_Workflow demonstrates the full cross-layer workflow:
+//  1. Fetch finalized EL block number, CL slot, and stateRoot
+//  2. Use EL block number for contract calls (whitelistTokens)
+//  3. Use CL slot/stateRoot for consensus-layer queries (validator effective balance)
 func TestCompleteCL_EL_Workflow(t *testing.T) {
-	// Set the beacon endpoint for getFinalizedELBlockNumber
+	// Set the beacon endpoint for Holesky
 	urlEndpoint, _ = url.Parse("https://rpc.ankr.com/premium-http/eth_holesky_beacon/a5d2626c4027e6d924c870d2558bc774bc995ce917a17a654a92856b3279a586")
+
 	// 1. Get finalized EL block number, CL slot, and stateRoot
 	elBlockNumber, clSlot, stateRoot, err := getFinalizedELBlockNumber()
 	if err != nil {
@@ -121,7 +83,7 @@ func TestCompleteCL_EL_Workflow(t *testing.T) {
 	}
 	t.Logf("Finalized EL block number: %d, CL slot: %d, stateRoot: %s", elBlockNumber, clSlot, stateRoot)
 
-	// 2. Use the block number for EL queries
+	// 2. Use the block number for EL queries (contract calls)
 	client, err := ethclient.Dial(testEthRpcUrl)
 	if err != nil {
 		t.Fatalf("Failed to connect to Ethereum node: %v", err)
@@ -130,6 +92,7 @@ func TestCompleteCL_EL_Workflow(t *testing.T) {
 	blockNumber := big.NewInt(elBlockNumber)
 
 	index := big.NewInt(0) // test the first token
+	blockNumber = nil
 
 	token, err := CallWhitelistTokenAt(client, proxyAddress, bootstrapStorageABI, index, blockNumber)
 	if err != nil {
@@ -138,8 +101,8 @@ func TestCompleteCL_EL_Workflow(t *testing.T) {
 	t.Logf("[EL] Whitelist token at index %d: %s", index.Int64(), token.Hex())
 
 	// 3. Use stateRoot and clSlot for a CL query: get efb for validator 1
-	slotsPerEpoch = 32
-	epoch := clSlot / slotsPerEpoch
+	// epoch := clSlot / slotsPerEpoch
+	epoch := clSlot / 32
 	validatorIdx := "1"
 	validators := []string{validatorIdx}
 	validatorBalances, err := getValidators(validators, stateRoot, epoch)
@@ -151,4 +114,10 @@ func TestCompleteCL_EL_Workflow(t *testing.T) {
 	} else {
 		t.Logf("[CL] No balance returned for validator %s", validatorIdx)
 	}
+
+	// Optionally, compare with a direct finalized epoch query
+	slotsPerEpoch = 32
+	epoch, stateRoot, _ = getFinalizedEpoch()
+	validatorBalances, err = getValidators(validators, stateRoot, epoch)
+	fmt.Println("debug2->", validatorBalances)
 }
