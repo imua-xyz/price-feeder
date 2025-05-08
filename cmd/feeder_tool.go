@@ -113,19 +113,8 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 					feederIDs = append(feederIDs, feederID)
 					// do the conversion on imuachain side to unify all NSTs
 					if fetchertypes.NSTToken(feeders.feederMap[int(feederID)].token) == fetchertypes.NativeTokenETH {
-						for _, sInfo := range update[0].SInfos() {
-							for i, validator := range sInfo.Validators {
-								// TODO: error handling
-								validatorIdx := fetchertypes.ConvertBytesToIntStr(validator)
-								sInfo.Validators[i] = validatorIdx
-							}
-						}
-						for _, sInfo := range update[1].SInfos() {
-							for i, validator := range sInfo.Validators {
-								// TODO: error handling
-								validatorIdx := fetchertypes.ConvertBytesToIntStr(validator)
-								sInfo.Validators[i] = validatorIdx
-							}
+						for _, deposit := range update.Deposits() {
+							deposit.Validator = fetchertypes.ConvertBytesToIntStr(deposit.Validator)
 						}
 					}
 				}
@@ -143,7 +132,8 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 						feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, version)
 					}
 				}
-			} else if e.NSTBalancesUpdate() {
+			}
+			if e.NSTBalancesUpdate() {
 				// balance update and stakers update will not happen in the same block
 				eNSTBalances := e.NSTBalances()
 				failed := feeders.UpdateNSTBalances(eNSTBalances)
@@ -182,8 +172,6 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 			}
 			logger.Info("sync local price from event", "prices", syncPriceInfo)
 			feeders.UpdatePrice(e.TxHeight(), finalPrices)
-		case imuaclient.EventNSTBalances:
-			feeders.UpdateNSTBalances(e)
 		case imuaclient.EventNSTPieces:
 			feeders.UpdateNSTPieces(e)
 		}
@@ -207,7 +195,6 @@ func getOracleParamsWithMaxRetry(maxRetry int, ecClient imuaclient.ImuaClientInf
 	return
 }
 
-// func ResetAllStakerValidators(ec imuaclient.ImuaClientInf, feederID uint64, assetID string, logger feedertypes.LoggerInf, fs *Feeders) error {
 func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedertypes.LoggerInf, feeder *feeder, all bool) error {
 	count := 0
 	for count < DefaultRetryConfig.Attempts {
@@ -222,10 +209,14 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 			// beaconchain use hex validators index instead of validator pubkey
 			// TODO: do this conversion on imuachain side
 			for _, sInfo := range stakerInfos {
-				for i, validator := range sInfo.ValidatorPubkeyList {
+				for i, validator := range sInfo.ValidatorList {
 					// TODO: error handling
-					validatorIdx, _ := fetchertypes.ConvertHexToIntStr(validator)
-					sInfo.ValidatorPubkeyList[i] = validatorIdx
+					validatorIdx, _ := fetchertypes.ConvertHexToIntStr(validator.ValidatorPubkey)
+					sInfo.ValidatorList[i] = &oracletypes.ValidatorDeposit{
+						ValidatorPubkey: validatorIdx,
+						Version:         validator.Version,
+						DepositAmount:   validator.DepositAmount,
+					}
 				}
 			}
 		}

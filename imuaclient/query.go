@@ -29,7 +29,7 @@ func (ec imuaClient) GetLatestPrice(tokenID uint64) (oracleTypes.PriceTimeRound,
 }
 
 // GetStakerInfos get all stakerInfos for the assetID
-func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, uint64, error) {
+func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, *oracleTypes.NSTVersion, error) {
 	reqPage := &query.PageRequest{
 		Key:        []byte{},
 		Offset:     0,
@@ -38,18 +38,18 @@ func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, 
 		Reverse:    false,
 	}
 	var ret []*oracleTypes.StakerInfo
-	var version uint64
+	var version *oracleTypes.NSTVersion
 	for reqPage.Key != nil {
 		stakerInfoRes, err := ec.oracleClient.StakerInfos(context.Background(), &oracleTypes.QueryStakerInfosRequest{AssetId: assetID, Pagination: reqPage})
 		if err != nil {
-			return []*oracleTypes.StakerInfo{}, 0, fmt.Errorf("failed to get stakerInfos from oracleClient, error:%w", err)
+			return []*oracleTypes.StakerInfo{}, nil, fmt.Errorf("failed to get stakerInfos from oracleClient, error:%w", err)
 		}
 		ret = append(ret, stakerInfoRes.StakerInfos...)
-		if version == 0 {
-			version = uint64(stakerInfoRes.Version)
-		} else if version != uint64(stakerInfoRes.Version) {
+		if version == nil {
+			version = stakerInfoRes.Version
+		} else if version.Version.Version != stakerInfoRes.Version.Version.Version {
 			// version has changed during the query
-			version = 0
+			version = nil
 			ret = nil
 			reqPage.Key = nil
 			continue
@@ -57,13 +57,4 @@ func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, 
 		reqPage.Key = stakerInfoRes.Pagination.NextKey
 	}
 	return ret, version, nil
-}
-
-// GetStakerInfos get the stakerInfos corresponding to stakerAddr for the assetID
-func (ec imuaClient) GetStakerInfo(assetID, stakerAddr string) ([]*oracleTypes.StakerInfo, int64, error) {
-	stakerInfoRes, err := ec.oracleClient.StakerInfos(context.Background(), &oracleTypes.QueryStakerInfosRequest{AssetId: assetID})
-	if err != nil {
-		return []*oracleTypes.StakerInfo{}, 0, fmt.Errorf("failed to get stakerInfo from oracleClient, error:%w", err)
-	}
-	return stakerInfoRes.StakerInfos, stakerInfoRes.Version, nil
 }

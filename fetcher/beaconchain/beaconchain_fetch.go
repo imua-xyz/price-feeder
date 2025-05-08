@@ -160,11 +160,11 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		sort.Slice(changedStakerBalances, func(i, j int) bool {
 			return changedStakerBalances[i].StakerIndex < changedStakerBalances[j].StakerIndex
 		})
-		nstBS := oracletypes.RawDataNST{
+		nstBC := oracletypes.RawDataNST{
 			Version:           version,
 			NstBalanceChanges: changedStakerBalances,
 		}
-		bz, err := proto.Marshal(&nstBS)
+		bz, err := proto.Marshal(&nstBC)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal nstBalanceChanges, error:%w", err)
 		}

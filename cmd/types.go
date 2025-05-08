@@ -421,7 +421,7 @@ func (f *feeder) updateNSTPieceIndex(index uint32) error {
 // it will update the stakers and related source information by invoking fetcherNST
 // it finds the finalized raw data by rootHash from finalizedTree and apply the balance changes, and will return error if no finalized raw data found
 // this is used to sync the balance changes from imuachain to the feeder
-func (f *feeder) applyNSTBalanceUpdate(rootHash []byte) error {
+func (f *feeder) applyNSTBalanceUpdate(rootHash []byte, version uint64) error {
 	if f.twoPhasesInfo == nil {
 		return errors.New("two phases not enabled for this feeder")
 	}
@@ -434,11 +434,11 @@ func (f *feeder) applyNSTBalanceUpdate(rootHash []byte) error {
 	if err := proto.Unmarshal(rawData, changes); err != nil {
 		return err
 	}
-	if err := f.stakers.ApplyBalanceChanges(changes); err != nil {
+	if err := f.stakers.ApplyBalanceChanges(changes, version); err != nil {
 		return err
 	}
 	sInfos, _ := f.stakers.GetStakerInfos()
-	f.fetcherNST.SetNSTStakers(f.source, sInfos, changes.Version+1)
+	f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
 	return nil
 }
 
@@ -455,7 +455,7 @@ func (f *feeder) UpdateSentLatestPieceIndex(roundID uint64, index int64) int64 {
 
 // updateNSTStakers update the stakers for 2nd phase price submission
 // it is used to sync the stakers information from imuachain to the feeder when depoisit/withdrwal nst happens
-func (f *feeder) updateNSTStakers(sInfo []*imuaclienttypes.EventNSTStaker) error {
+func (f *feeder) updateNSTStakers(sInfo *imuaclienttypes.EventNSTStaker) error {
 	errCh := make(chan error)
 	select {
 	case f.nstStakersCh <- &updateNSTStakerReq{
@@ -739,34 +739,21 @@ func (f *feeder) start() {
 				req.result <- &updateParamsRes{}
 				// TODO: ? no need to take care of concurrency for these requests of nstStakers change with channel
 			case req := <-f.nstStakersCh:
-				add := req.info[0]
-				remove := req.info[1]
-				var nv, lv uint64
-				if add != nil {
-					nv, lv = add.Versions()
-					if remove != nil {
-						rNv, rLv := remove.Versions()
-						nv = min(nv, rNv)
-						lv = max(lv, rLv)
-					}
-				} else if remove != nil {
-					nv, lv = remove.Versions()
-				}
-
-				if err := f.stakers.Update(req.info[0].SInfos(), req.info[1].SInfos(), nv, lv); err != nil {
+				v, _ := req.info.Versions()
+				if err := f.stakers.CacheDeposits(req.info.Deposits(), v); err != nil {
 					req.res <- err
 				} else {
-					req.res <- nil
 					sInfos, version := f.stakers.GetStakerInfos()
 					f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
+					req.res <- nil
 				}
 			case req := <-f.nstBalanceCh:
-				if err := f.applyNSTBalanceUpdate(req.info.RootHash()); err != nil {
+				if err := f.applyNSTBalanceUpdate(req.info.RootHash(), req.info.Version()); err != nil {
 					req.res <- err
 				} else {
-					req.res <- nil
 					sInfos, version := f.stakers.GetStakerInfos()
 					f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
+					req.res <- nil
 				}
 			case req := <-f.nstPieceCh:
 				req.res <- f.updateNSTPieceIndex(req.pieceIndex)
@@ -873,7 +860,7 @@ type updateNSTStakersReq struct {
 }
 
 type updateNSTStakerReq struct {
-	info []*imuaclienttypes.EventNSTStaker
+	info *imuaclienttypes.EventNSTStaker
 	res  chan error
 }
 
@@ -1053,6 +1040,7 @@ func (fs *Feeders) Start() {
 					feeder, ok := fs.feederMap[int(feederID)]
 					if !ok {
 						fs.logger.Error("failed to get feeder by feederID when update price for feeders", "updatePriceReq", req)
+						continue
 					}
 					if err := feeder.updateNSTBalance(balanceInfo); err != nil {
 						res = append(res, &failedFeedersWithError{
