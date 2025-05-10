@@ -16,6 +16,7 @@ import (
 const (
 	loggerTagPrefix = "feed_%s_%d"
 	statusOk        = 0
+	zeroPriceStr    = "0"
 )
 
 type priceFetcher interface {
@@ -78,6 +79,7 @@ type feeder struct {
 	// TODO: currently only 1 source for each token, so we can just set it as a field here
 	source   string
 	token    string
+	decimal  int32
 	tokenID  uint64
 	feederID int
 	// TODO: add check for rouleID, v1 can be skipped
@@ -137,11 +139,12 @@ func (f *feeder) Info() FeederInfo {
 	}
 }
 
-func newFeeder(tf *oracletypes.TokenFeeder, feederID int, fetcher priceFetcher, submitter priceSubmitter, source string, token string, maxNonce int32, logger feedertypes.LoggerInf) *feeder {
+func newFeeder(tf *oracletypes.TokenFeeder, feederID int, fetcher priceFetcher, submitter priceSubmitter, source string, token string, maxNonce, decimal int32, logger feedertypes.LoggerInf) *feeder {
 	return &feeder{
 		logger:   logger,
 		source:   source,
 		token:    token,
+		decimal:  decimal,
 		tokenID:  tf.TokenID,
 		feederID: feederID,
 		// these conversion a safe since the block height defined in cosmossdk is int64
@@ -195,10 +198,16 @@ func (f *feeder) start() {
 							f.logger.Info("didn't submit price due to price not changed", "roundID", roundID, "delta", delta, "price", price)
 							f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
 							continue
-						} else if price.EqualPrice(f.lastPrice.price) {
-							f.logger.Info("didn't submit price due to price not changed", "roundID", roundID, "delta", delta, "price", price)
-							f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
-							continue
+						} else {
+							if price.Decimal != f.decimal {
+								price.Price = convertDecimal(price.Price, price.Decimal, f.decimal)
+								price.Decimal = f.decimal
+							}
+							if price.EqualPrice(f.lastPrice.price) {
+								f.logger.Info("didn't submit price due to price not changed", "roundID", roundID, "delta", delta, "price", price)
+								f.logger.Debug("got latsetprice equal to local cache", "feeder", f.Info())
+								continue
+							}
 						}
 						if nonce := f.lastSent.getNextNonceAndUpdate(roundID); nonce < 0 {
 							f.logger.Error("failed to submit due to no available nonce", "roundID", roundID, "delta", delta, "feeder", f.Info())
@@ -352,14 +361,14 @@ func NewFeeders(logger feedertypes.LoggerInf, fetcher priceFetcher, submitter pr
 
 }
 
-func (fs *Feeders) SetupFeeder(tf *oracletypes.TokenFeeder, feederID int, source string, token string, maxNonce int32) {
+func (fs *Feeders) SetupFeeder(tf *oracletypes.TokenFeeder, feederID int, source string, token string, maxNonce, decimal int32) {
 	fs.locker.Lock()
 	defer fs.locker.Unlock()
 	if fs.running {
 		fs.logger.Error("failed to setup feeder for a running feeders, this should be called before feeders is started")
 		return
 	}
-	fs.feederMap[feederID] = newFeeder(tf, feederID, fs.fetcher, fs.submitter, source, token, maxNonce, fs.logger.With("feeder", fmt.Sprintf(loggerTagPrefix, token, feederID)))
+	fs.feederMap[feederID] = newFeeder(tf, feederID, fs.fetcher, fs.submitter, source, token, maxNonce, decimal, fs.logger.With("feeder", fmt.Sprintf(loggerTagPrefix, token, feederID)))
 }
 
 // Start will start to listen the trigger(newHeight) and updatePrice events
@@ -392,9 +401,13 @@ func (fs *Feeders) Start() {
 					<-res
 				}
 				for tfID, tf := range params.TokenFeeders {
+					if tfID == 0 {
+						continue
+					}
 					if _, ok := existingFeederIDs[int64(tfID)]; !ok {
 						// create and start a new feeder
 						tokenName := strings.ToLower(params.Tokens[tf.TokenID].Name)
+						decimal := params.Tokens[tf.TokenID].Decimal
 						source := fetchertypes.Chainlink
 						if fetchertypes.IsNSTToken(tokenName) {
 							nstToken := fetchertypes.NSTToken(tokenName)
@@ -406,7 +419,7 @@ func (fs *Feeders) Start() {
 							tokenName += fetchertypes.BaseCurrency
 						}
 
-						feeder := newFeeder(tf, tfID, fs.fetcher, fs.submitter, source, tokenName, params.MaxNonce, fs.logger)
+						feeder := newFeeder(tf, tfID, fs.fetcher, fs.submitter, source, tokenName, params.MaxNonce, decimal, fs.logger.With("feeder", fmt.Sprintf(loggerTagPrefix, tokenName, tfID)))
 						fs.feederMap[tfID] = feeder
 						feeder.start()
 					}
@@ -470,4 +483,21 @@ func (fs *Feeders) UpdateOracleParams(p *oracletypes.Params) {
 		return
 	}
 	fs.updateParams <- p
+}
+
+func convertDecimal(price string, decimalFrom, decimalTo int32) string {
+	if len(price) == 0 {
+		return zeroPriceStr
+	}
+	if decimalTo > decimalFrom {
+		return price + strings.Repeat("0", int(decimalTo-decimalFrom))
+	}
+	if decimalTo < decimalFrom {
+		delta := int(decimalFrom - decimalTo)
+		if len(price) <= delta {
+			return zeroPriceStr
+		}
+		return price[:len(price)-delta]
+	}
+	return price
 }
