@@ -418,7 +418,7 @@ func (fs *Feeders) Start() {
 							tokenName += fetchertypes.BaseCurrency
 						}
 
-						feeder := newFeeder(tf, tfID, fs.fetcher, fs.submitter, source, tokenName, params.MaxNonce, decimal, fs.logger)
+						feeder := newFeeder(tf, tfID, fs.fetcher, fs.submitter, source, tokenName, params.MaxNonce, decimal, fs.logger.With("feeder", fmt.Sprintf(loggerTagPrefix, tokenName, tfID)))
 						fs.feederMap[tfID] = feeder
 						feeder.start()
 					}
