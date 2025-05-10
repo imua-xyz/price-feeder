@@ -16,6 +16,7 @@ import (
 const (
 	loggerTagPrefix = "feed_%s_%d"
 	statusOk        = 0
+	zeroPriceStr    = "0"
 )
 
 type priceFetcher interface {
@@ -485,13 +486,16 @@ func (fs *Feeders) UpdateOracleParams(p *oracletypes.Params) {
 }
 
 func convertDecimal(price string, decimalFrom, decimalTo int32) string {
+	if len(price) == 0 {
+		return zeroPriceStr
+	}
 	if decimalTo > decimalFrom {
 		return price + strings.Repeat("0", int(decimalTo-decimalFrom))
 	}
 	if decimalTo < decimalFrom {
 		delta := int(decimalFrom - decimalTo)
 		if len(price) <= delta {
-			return ""
+			return zeroPriceStr
 		}
 		return price[:len(price)-delta]
 	}
