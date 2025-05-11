@@ -1,6 +1,6 @@
 //go:build devmode
 
-// this snippet is not used in devmode build to test nst balance changes
+// this snippet is used in devmode build to test nst balance changes
 package beaconchain
 
 import (
