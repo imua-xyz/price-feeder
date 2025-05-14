@@ -93,7 +93,6 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 					return
 				}
 				feeders.UpdateOracleParams(oracleP)
-				// TODO: add newly added tokenfeeders if exists
 			}
 			feeders.Trigger(e.Height(), e.FeederIDs())
 		case *imuaclient.EventUpdatePrice:
