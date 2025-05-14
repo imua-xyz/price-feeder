@@ -249,7 +249,7 @@ type SubscribeResult struct {
 		} `json:"data"`
 		Events struct {
 			Fee               []string `json:"fee_market.base_fee"`
-			ParamsUpdate      []string `json:"create_price.params_update"`
+			ParamsUpdate      []string `json:"oracle_update_params.params_update"`
 			FinalPrice        []string `json:"create_price.final_price"`
 			PriceUpdate       []string `json:"create_price.price_update"`
 			FeederID          []string `json:"create_price.feeder_id"`
