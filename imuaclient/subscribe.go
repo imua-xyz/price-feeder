@@ -54,7 +54,7 @@ func (ec *imuaClient) Subscribe() {
 				select {
 				case <-timeout.C:
 					// this should not happen
-					panic("failed to complete closing  all ws routines, timeout")
+					panic("failed to complete closing all ws routines, timeout")
 				default:
 					if ec.isZeroWsRoutines() {
 						logger.Info("all running ws routnines stopped")
@@ -212,6 +212,7 @@ func (ec imuaClient) sendAllSubscribeMsgs(maxRetry int) error {
 
 func (ec imuaClient) startPingRoutine() bool {
 	if _, ok := ec.increaseWsRoutines(); !ok {
+		ec.logger.Error("failed to start ping routine")
 		// ws connection is not active
 		return ok
 	}
@@ -232,6 +233,7 @@ func (ec imuaClient) startPingRoutine() bool {
 					ec.StopWsRoutines()
 					return
 				}
+				ec.logger.Debug("ping ws connection")
 			case <-ec.wsStop:
 				logger.Info("close ws ping routine due to receiving close signal")
 				if err := ec.wsClient.WriteMessage(
@@ -264,12 +266,7 @@ func (ec imuaClient) startReadRoutine() bool {
 			default:
 				_, data, err := ec.wsClient.ReadMessage()
 				if err != nil {
-					ec.logger.Error("failed to read from ws publisher", "error", err)
-					if !websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure) {
-						// TODO: retry ?
-						panic(fmt.Sprintf("Got unexpectedCloseError from ws connection, error:%v", err))
-					}
-					logger.Info("send signal to stop all running ws routines")
+					ec.logger.Error("failed to read from ws publisher, send signal to stop all running ws routines", "error", err)
 					// send signal to stop all running ws routines
 					ec.StopWsRoutines()
 					return
