@@ -56,6 +56,9 @@ func getCapsuleAddressForStaker(ethClient *ethclient.Client, stakerAddr string, 
 	if err != nil {
 		return "", err
 	}
+	if len(output) == 0 {
+		return "", nil
+	}
 	var capsuleAddress common.Address
 	err = parsedABI.UnpackIntoInterface(&capsuleAddress, "ownerToCapsule", output)
 	if err != nil {

@@ -9,6 +9,8 @@ import (
 	"github.com/imua-xyz/price-feeder/fetcher"
 	"github.com/imua-xyz/price-feeder/imuaclient"
 	"github.com/imua-xyz/price-feeder/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
@@ -118,7 +120,7 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 						}
 					}
 				}
-				logger.Info("update stakers for nst", "feederIDs", feederIDs)
+				logger.Info("cache deposit stakers info for nst", "feederIDs", feederIDs)
 				failed := feeders.UpdateNSTStakers(eNSTStakers)
 				for _, f := range failed {
 					logger.Error("failed to update stakerInfos for nst, do resetAll", "feederID", f.feederID, "error", f.err)
@@ -133,9 +135,12 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 					}
 				}
 			}
-			if e.NSTBalancesUpdate() {
+			if e.NSTBalancesUpdate() || e.NSTFeedVersionsUpdate() {
 				// balance update and stakers update will not happen in the same block
 				eNSTBalances := e.NSTBalances()
+				if len(eNSTBalances) == 0 {
+					eNSTBalances = e.ConvertNSTBalanceChangesFromFeedVersions()
+				}
 				failed := feeders.UpdateNSTBalances(eNSTBalances)
 				for _, f := range failed {
 					logger.Error("failed to update stakerInfos for nst, do resetAll", "feederID", f.feederID, "error", f.err)
@@ -200,6 +205,11 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 	for count < DefaultRetryConfig.Attempts {
 		stakerInfos, version, err := ec.GetStakerInfos(assetID)
 		if err != nil {
+			st, ok := status.FromError(err)
+			if ok && st.Code() == codes.NotFound {
+				logger.Info("stakerInfos not found, maybe the token is not registered or no deposit yet. skipping resetAllStakerValidators", "feederID", feeder.feederID, "token", feeder.token)
+				return nil
+			}
 			logger.Error("failed to get stakerInfos for native-restaking-token", "feederID", feeder.feederID, "token", feeder.token, "error", err)
 			count++
 			continue

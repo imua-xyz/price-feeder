@@ -20,11 +20,13 @@ import (
 	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
 )
 
-var ErrNoAvailableNextIndex *types.Err = types.NewErr("there's no available next index")
-
 const (
 	loggerTagPrefix = "feed_%s_%d"
 	statusOk        = 0
+)
+
+var (
+	ErrNoAvailableNextIndex *types.Err = types.NewErr("there's no available next index")
 )
 
 type PriceFetcher interface {
@@ -312,14 +314,6 @@ func (f *feeder) FinalizeRawData(roundID uint64, rootHash []byte) bool {
 	return f.twoPhasesInfo.finalizeRawData(roundID, rootHash)
 }
 
-// GetRawDataPiece return the raw data piece for 2nd phase price submission, this method will/should not be called concurrently with AddRawData or FinalizeRawData
-func (f *feeder) GetRawDataPieceAndProof(roundID uint64, index uint32) (*PieceWithProof, error) {
-	if f.twoPhasesInfo == nil {
-		return nil, errors.New("two phases not enabled for this feeder")
-	}
-	return f.twoPhasesInfo.getRawDataPieceAndProof(roundID, index)
-}
-
 func (f *feeder) GetLatestRootHash() ([]byte, uint32) {
 	return f.twoPhasesInfo.getLatestRootHash()
 }
@@ -355,7 +349,6 @@ func (f *feeder) NextSendablePieceWithProofs(roundID uint64) ([]*PieceWithProof,
 	}
 	if f.twoPhasesInfo.roundID != roundID {
 		return nil, fmt.Errorf("roundID not match, feeder roundID:%d, input roundID:%d", f.twoPhasesInfo.roundID, roundID)
-
 	}
 	if f.twoPhasesInfo.finalizedTree == nil {
 		return nil, errors.New("no finalized raw data found for this round")
@@ -367,15 +360,20 @@ func (f *feeder) NextSendablePieceWithProofs(roundID uint64) ([]*PieceWithProof,
 	if nextIdx < f.twoPhasesInfo.sentLatestPieceIndex {
 		return nil, ErrNoAvailableNextIndex.Wrap(fmt.Sprintf("latestSent:%d, nextPieceIndex:%d, leafCount:%d", f.twoPhasesInfo.sentLatestPieceIndex, nextIdx, f.twoPhasesInfo.finalizedTree.LeafCount()))
 	}
-
+	last, _ := f.twoPhasesInfo.nextIndexIsLastOrMore()
 	if nextIdx > f.twoPhasesInfo.sentLatestPieceIndex {
 		pwf, err := f.twoPhasesInfo.getRawDataPieceAndProof(roundID, f.twoPhasesInfo.nextPieceIndex)
 		if err != nil {
 			return nil, err
 		}
 		ret = append(ret, pwf)
+		if last {
+			return ret, nil
+		}
 	}
-
+	if last {
+		return nil, ErrNoAvailableNextIndex.Wrap(fmt.Sprintf("latestSent:%d, nextPieceIndex:%d, leafCount:%d", f.twoPhasesInfo.sentLatestPieceIndex, nextIdx, f.twoPhasesInfo.finalizedTree.LeafCount()))
+	}
 	pwf, err := f.twoPhasesInfo.getRawDataPieceAndProof(roundID, f.twoPhasesInfo.nextPieceIndex+1)
 	if err == nil {
 		ret = append(ret, pwf)
@@ -389,17 +387,17 @@ func (f *feeder) updateNSTPieceIndex(index uint32) error {
 	if f.twoPhasesInfo == nil {
 		return errors.New("two phases not enabled for this feeder")
 	}
+
 	if f.twoPhasesInfo.finalizedTree == nil {
 		return errors.New("no finalized raw data found for this round")
 	}
-	if f.twoPhasesInfo.nextPieceIndex >= f.twoPhasesInfo.finalizedTree.LeafCount()-1 {
-		return fmt.Errorf("next piece index is at the end of the tree, index:%d, leafCount:%d", f.twoPhasesInfo.nextPieceIndex, f.twoPhasesInfo.finalizedTree.LeafCount())
-	}
-	if _, ok := f.twoPhasesInfo.seenIndex[index]; ok {
-		return fmt.Errorf("index already seen, index:%d", index)
-	}
+
 	if last, _ := f.twoPhasesInfo.nextIndexIsLastOrMore(); last {
 		return fmt.Errorf("nextIndexPiece had reached the last piece, skip update with synced-index:%d, local-nextIndex:%d", index, f.twoPhasesInfo.nextPieceIndex)
+	}
+
+	if _, ok := f.twoPhasesInfo.seenIndex[index]; ok {
+		return fmt.Errorf("index already seen, index:%d", index)
 	}
 
 	if index <= f.twoPhasesInfo.nextPieceIndex {
@@ -425,17 +423,28 @@ func (f *feeder) applyNSTBalanceUpdate(rootHash []byte, version uint64) error {
 	if f.twoPhasesInfo == nil {
 		return errors.New("two phases not enabled for this feeder")
 	}
-	rawData := f.twoPhasesInfo.finalizedRawDataByRootHash(rootHash)
-	if rawData == nil {
-		return errors.New("no finalized raw data found for this rootHash")
-	}
 
-	changes := &oracletypes.RawDataNST{}
-	if err := proto.Unmarshal(rawData, changes); err != nil {
-		return err
-	}
-	if err := f.stakers.ApplyBalanceChanges(changes, version); err != nil {
-		return err
+	if bytes.Equal(rootHash, fetchertypes.EmptyRawDataChangesRootHash[:]) {
+		// this is a special case for empty raw data changes which is triggered by the staker's deposit, so we need to use version+1
+		if err := f.stakers.GrowVersionsFromCache(version + 1); err != nil {
+			f.logger.Error("failed to grow versions from cache", "error", err, "next feed-version", version)
+			return err
+		}
+		f.logger.Info("successfully grow versions from cache", "updated feed-version", version)
+	} else {
+		rawData := f.twoPhasesInfo.finalizedRawDataByRootHash(rootHash)
+		if rawData == nil {
+			return errors.New("no finalized raw data found for this rootHash")
+		}
+
+		changes := &oracletypes.RawDataNST{}
+		if err := proto.Unmarshal(rawData, changes); err != nil {
+			return err
+		}
+		if err := f.stakers.ApplyBalanceChanges(changes, version); err != nil {
+			return err
+		}
+		f.logger.Info("successfully applied balance changes", "updated feed-version", version)
 	}
 	sInfos, _ := f.stakers.GetStakerInfos()
 	f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
@@ -621,7 +630,7 @@ func (f *feeder) start() {
 			case h := <-f.heightsCh:
 				if h.priceHeight > f.lastPrice.height {
 					// the block event arrived early, wait for the price update events to update local price
-					f.logger.Info("skip trigger for price update on current commitHeight", "height", h.commitHeight)
+					f.logger.Info("skip trigger for price update on current commitHeight", "height-commit", h.commitHeight, "height-price", h.priceHeight)
 					continue
 				}
 				baseBlock, roundID, delta, active := f.calculateRound(h.commitHeight)
@@ -633,7 +642,9 @@ func (f *feeder) start() {
 				}
 
 				if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {
-					f.logger.Info("triggered 2nd-phase rawData piece message transaction sending", "current height", h.commitHeight, "price height", h.priceHeight, "sent_count", len(sentIndexes), "indexes", sentIndexes)
+					if len(sentIndexes) > 0 {
+						f.logger.Info("triggered 2nd-phase rawData piece message transaction sending", "current height", h.commitHeight, "price height", h.priceHeight, "sent_count", len(sentIndexes), "indexes", sentIndexes)
+					}
 					continue
 				}
 
@@ -743,18 +754,21 @@ func (f *feeder) start() {
 				if err := f.stakers.CacheDeposits(req.info.Deposits(), v); err != nil {
 					req.res <- err
 				} else {
-					sInfos, version := f.stakers.GetStakerInfos()
-					f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
+					f.logger.Info("successfully cached deposits", "updated cached-version", v, "feederID", f.feederID)
+					if v == 1 {
+						if err := f.stakers.GrowVersionsFromCache(v + 1); err != nil {
+							f.logger.Error("failed to grow versions from cache on first deposit", "error", err, "feederID", f.feederID)
+							req.res <- err
+						} else {
+							f.logger.Info("successfully grow versions from cache on first deposit, then reset stakerlist for fetcher", "feederID", f.feederID)
+							sInfos, version := f.stakers.GetStakerInfos()
+							f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
+						}
+					}
 					req.res <- nil
 				}
 			case req := <-f.nstBalanceCh:
-				if err := f.applyNSTBalanceUpdate(req.info.RootHash(), req.info.Version()); err != nil {
-					req.res <- err
-				} else {
-					sInfos, version := f.stakers.GetStakerInfos()
-					f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
-					req.res <- nil
-				}
+				req.res <- f.applyNSTBalanceUpdate(req.info.RootHash(), req.info.Version())
 			case req := <-f.nstPieceCh:
 				req.res <- f.updateNSTPieceIndex(req.pieceIndex)
 				if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {
@@ -1047,6 +1061,8 @@ func (fs *Feeders) Start() {
 							feederID: feederID,
 							err:      err,
 						})
+					} else {
+						fs.logger.Info("successfully updated NST balance", "feederID", feederID, "balanceInfo", balanceInfo)
 					}
 				}
 				req.res <- res

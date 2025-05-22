@@ -2,7 +2,6 @@ package beaconchain
 
 import (
 	"context"
-	"fmt"
 	"math/big"
 	"strings"
 
@@ -29,12 +28,10 @@ func CallOwnerToCapsule(
 ) (common.Address, error) {
 	parsedABI, err := abi.JSON(strings.NewReader(abiJSON))
 	if err != nil {
-		fmt.Println("debug--->err0:", err)
 		return common.Address{}, err
 	}
 	input, err := parsedABI.Pack("ownerToCapsule", stakerAddress)
 	if err != nil {
-		fmt.Println("debug--->err1:", err)
 		return common.Address{}, err
 	}
 	callMsg := ethereum.CallMsg{
@@ -43,13 +40,11 @@ func CallOwnerToCapsule(
 	}
 	output, err := ethClient.CallContract(context.Background(), callMsg, blockNumber)
 	if err != nil {
-		fmt.Println("debug--->err2:", err, blockNumber)
 		return common.Address{}, err
 	}
 	var capsuleAddress common.Address
 	err = parsedABI.UnpackIntoInterface(&capsuleAddress, "ownerToCapsule", output)
 	if err != nil {
-		fmt.Println("debug--->err3:", err, output)
 		return common.Address{}, err
 	}
 	return capsuleAddress, nil

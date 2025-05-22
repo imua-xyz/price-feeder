@@ -17,12 +17,17 @@ import (
 var (
 	lastNSTPrice  string
 	stakerChanges = map[uint32]*oracletypes.NSTKV{
-		0: {StakerIndex: 0, Balance: 1239},
-		1: {StakerIndex: 1, Balance: 9977},
-		2: {StakerIndex: 2, Balance: 5566},
-		3: {StakerIndex: 3, Balance: 1998292},
-		4: {StakerIndex: 4, Balance: 32},
-		5: {StakerIndex: 5, Balance: 910},
+		0:  {StakerIndex: 0, Balance: 1239},
+		1:  {StakerIndex: 1, Balance: 9977},
+		2:  {StakerIndex: 2, Balance: 5566},
+		3:  {StakerIndex: 3, Balance: 1998292},
+		4:  {StakerIndex: 4, Balance: 320},
+		5:  {StakerIndex: 5, Balance: 910},
+		6:  {StakerIndex: 6, Balance: 919},
+		7:  {StakerIndex: 7, Balance: 510},
+		8:  {StakerIndex: 8, Balance: 810},
+		9:  {StakerIndex: 9, Balance: 670},
+		10: {StakerIndex: 10, Balance: 777},
 	}
 )
 
@@ -48,7 +53,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	}
 	changes := make([]*oracletypes.NSTKV, 0, len(stakerValidators))
 	for stakerIndex, _ := range stakerValidators {
-		if stakerIndex > 5 {
+		if stakerIndex > 10 {
 			continue
 		}
 		changes = append(changes, stakerChanges[uint32(stakerIndex)])
@@ -69,6 +74,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		}, nil
 	}
 	return &types.PriceInfo{
-		Price: string(bz),
+		Price:   string(bz),
+		RoundID: fmt.Sprintf("%s_%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10)),
 	}, nil
 }

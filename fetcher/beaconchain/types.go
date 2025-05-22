@@ -41,7 +41,10 @@ type source struct {
 }
 
 type config struct {
-	URL   string `yaml:"url"`
+	URLs struct {
+		Beaconchain string `yaml:"beaconchain"`
+		ETH         string `yaml:"eth"`
+	} `yaml:"urls"`
 	NSTID string `yaml:"nstid"`
 }
 
@@ -86,9 +89,9 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse config, error:%v", err))
 	}
 	// beaconchain endpoint url
-	urlEndpoint, err = url.Parse(cfg.URL)
+	urlEndpoint, err = url.Parse(cfg.URLs.Beaconchain)
 	if err != nil {
-		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse url:%s, error:%v", cfg.URL, err))
+		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse url:%s, error:%v", cfg.URLs.Beaconchain, err))
 	}
 
 	// parse nstID by splitting it with "_'"
@@ -125,13 +128,19 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 		}
 	}
 
+	client, err := ethclient.Dial(cfg.URLs.ETH)
+	if err != nil {
+		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to connect to Ethereum node: %v", err))
+	}
+
 	// init first to get a fixed pointer for 'fetch' to refer to
 	defaultSource = &source{}
+
 	*defaultSource = source{
 		logger:    logger,
 		Source:    types.NewSource(logger, types.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
 		stakers:   types.NewStakers(),
-		ethClient: nil,
+		ethClient: client,
 	}
 
 	// update nst assetID to be consistent with imuad. for beaconchain it's about different lzID

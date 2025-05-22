@@ -45,12 +45,13 @@ type EventInf interface {
 }
 
 type EventNewBlock struct {
-	height       int64
-	gas          string
-	paramsUpdate bool
-	nstStakers   EventNSTStakers
-	nstBalances  EventNSTBalances
-	feederIDs    map[int64]struct{}
+	height          int64
+	gas             string
+	paramsUpdate    bool
+	nstStakers      EventNSTStakers
+	nstBalances     EventNSTBalances
+	feederIDs       map[int64]struct{}
+	nstFeedVersions map[uint64]uint64
 }
 
 func (s *SubscribeResult) GetEventNewBlock() (*EventNewBlock, error) {
@@ -82,6 +83,21 @@ func (s *SubscribeResult) GetEventNewBlock() (*EventNewBlock, error) {
 		ret.nstStakers = eNSTStakers
 	}
 
+	if len(s.Result.Events.NSTFeedVersion) > 0 {
+		feedVersions, err := s.GetFeedVersions()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse feedVersion from event_newBlock response, error:%w", err)
+		}
+		ret.nstFeedVersions = feedVersions
+	}
+
+	if len(s.Result.Events.NSTBalanceChange) > 0 {
+		nstBalances, err := s.getEventNSTBalances()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse nstBalanceChange from event_newBlock response, error:%w", err)
+		}
+		ret.nstBalances = nstBalances
+	}
 	return ret, nil
 }
 
@@ -103,6 +119,28 @@ func (e *EventNewBlock) NSTStakersUpdate() bool {
 
 func (e *EventNewBlock) NSTBalancesUpdate() bool {
 	return len(e.nstBalances) > 0
+}
+
+func (e *EventNewBlock) NSTFeedVersionsUpdate() bool {
+	return len(e.nstFeedVersions) > 0
+}
+
+func (e *EventNewBlock) NSTFeedVersions() map[uint64]uint64 {
+	return e.nstFeedVersions
+}
+
+func (e *EventNewBlock) ConvertNSTBalanceChangesFromFeedVersions() EventNSTBalances {
+	if len(e.nstFeedVersions) == 0 {
+		return nil
+	}
+	ret := make(EventNSTBalances)
+	for feederID, version := range e.nstFeedVersions {
+		ret[feederID] = &EventNSTBalance{
+			rootHash: fetchertypes.EmptyRawDataChangesRootHash[:],
+			version:  version,
+		}
+	}
+	return ret
 }
 
 func (e *EventNewBlock) NSTStakers() EventNSTStakers {
@@ -270,6 +308,29 @@ func (e *EventNSTStaker) Versions() (uint64, uint64) {
 	return e.nextVersion, e.latestVersion
 }
 
+func (s *SubscribeResult) GetFeedVersions() (map[uint64]uint64, error) {
+	if len(s.Result.Events.NSTFeedVersion) < 1 {
+		return nil, errors.New("failed to get feedVersion from event_newBlock response")
+	}
+	ret := make(map[uint64]uint64)
+	for _, feedVersion := range s.Result.Events.NSTFeedVersion {
+		tmp := strings.Split(feedVersion, "_")
+		if len(tmp) != 2 {
+			return nil, errors.New("failed to parse feedVersion from event_newBlock response, expected 2 parts")
+		}
+		feederID, err := strconv.ParseUint(tmp[0], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse feederID from feedVersion in event_newBlock response, error:%w", err)
+		}
+		version, err := strconv.ParseUint(tmp[1], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse version from feedVersion in event_newBlock response, error:%w", err)
+		}
+		ret[feederID] = version
+	}
+	return ret, nil
+}
+
 func (s *SubscribeResult) getEventNSTStakers() (EventNSTStakers, error) {
 	if len(s.Result.Events.NSTStakersChange) == 0 {
 		return nil, errors.New("failed to get NativeTokenChange from event_txUpdateNST response")
@@ -378,6 +439,7 @@ type SubscribeResult struct {
 			NSTPieceChange   []string `json:"create_price.nst_piece_change"`
 			NSTBalanceUpdate []string `json:"create_price.nst_balance_update"`
 			NSTBalanceChange []string `json:"create_price.nst_balance_change"`
+			NSTFeedVersion   []string `json:"create_price.nst_feed_version"`
 		} `json:"events"`
 	} `json:"result"`
 }
