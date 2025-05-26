@@ -7,7 +7,6 @@ import (
 	"github.com/imua-xyz/price-feeder/debugger"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -32,7 +31,7 @@ var debugStartCmd = &cobra.Command{
 	Short: "start listening to new blocks",
 	Long:  "start listening to new blocks",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logger := feedertypes.NewLogger(zapcore.DebugLevel)
+		logger := feedertypes.NewLogger(feedertypes.LogConf{Level: "debug"})
 		DebugPriceFeeder(feederConfig, logger, mnemonic, sourcesPath)
 		return nil
 	},

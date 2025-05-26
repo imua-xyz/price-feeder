@@ -100,7 +100,9 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 	for event := range ecClient.EventsCh() {
 		switch e := event.(type) {
 		case *imuaclient.EventNewBlock:
+			logger.Debug("new block event received", "height", e.Height())
 			if e.ParamsUpdate() {
+				logger.Info("oracle params update detected, will try to get new params and update feeders correspondingly...")
 				oracleP, err = getOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ecClient, logger)
 				if err != nil {
 					logger.Error(fmt.Sprintf("Failed to get oracle params with maxRetry when params update detected, price-feeder will exit, error:%v", err))

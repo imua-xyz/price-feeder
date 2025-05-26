@@ -1,12 +1,14 @@
 package imuaclient
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
 	"cosmossdk.io/simapp/params"
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
@@ -100,8 +102,12 @@ func NewImuaClient(logger feedertypes.LoggerInf, endpoint, wsEndpoint, endpointD
 			return nil, fmt.Errorf("failed to parse wsEndpoint, wsEndpoint:%s, error:%w", wsEndpoint, err)
 		}
 		ec.wsDialer = &websocket.Dialer{
-			NetDial: func(_, _ string) (net.Conn, error) {
-				return net.Dial("tcp", u.Host)
+			NetDialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				d := net.Dialer{
+					Timeout:   5 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}
+				return d.DialContext(ctx, "tcp", u.Host)
 			},
 			Proxy: http.ProxyFromEnvironment,
 		}

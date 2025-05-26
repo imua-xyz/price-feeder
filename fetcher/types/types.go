@@ -841,32 +841,46 @@ func (s *Stakers) Update(sInfosAdd, sInfosRemove StakerInfos, nextVersion, lates
 	return nil
 }
 
-func (s *Stakers) tryGrowVersionsFromCache(version uint64) error {
-	if version < s.Version+1 {
-		return fmt.Errorf("grow to a hisotry version, current:%d, next:%d", s.Version, version)
+// tryGrowVersionsFromCache tries to grow the staker infos from the cache to a specific version: apply appending deposits to input_version-1
+// since update balance change will increase the version by 1 which corresponding to no deposit,so we need to grow the version to input_version-1
+func (s *Stakers) tryGrowVersionsFromCache(version uint64, deposit bool) error {
+	if version < s.Version {
+		return fmt.Errorf("grow to a history version, current:%d, next:%d", s.Version, version)
 	}
 
-	// there's no 'deposit' happned during balance change submission
-	if version == s.Version+1 {
-		return nil
+	if version == s.Version {
+		if deposit {
+			return fmt.Errorf("grow to a history version by deposit, current:%d, next:%d", s.Version, version)
+		} else {
+			return nil
+		}
 	}
 
 	if s.SInfosAdd == nil {
 		return fmt.Errorf("failed to grow version, stakerInfosAdd is nil")
 	}
 
+	// feedVersion will at least grow by 2 or not grow at all
 	// grow the version to the next version
-	for i := s.Version + 1; i < version; i++ {
+	var err error
+	var i = s.Version + 1
+	defer func() {
+		if err != nil && i > 1 {
+			s.downgradeVersion(i - 1)
+		}
+	}()
+	for ; i <= version; i++ {
 		// grow the version
 		deposit := s.SInfosAdd[i]
 		if deposit == nil {
-			return fmt.Errorf("failed to grow version, stakerInfosAdd for version %d is nil", i)
+			err = fmt.Errorf("failed to grow version, stakerInfosAdd for version %d is nil", i)
+			return err
 		}
 		sInfo, exists := s.SInfos[uint32(deposit.StakerIndex)]
 		if !exists {
 			if int(deposit.StakerIndex) != len(s.SInfos) {
-				s.downgradeVersion(i)
-				return fmt.Errorf("failed to grow version, stakerIndex is not continuous, new staker-index:%d, current max-index:%d", deposit.StakerIndex, len(s.SInfos))
+				err = fmt.Errorf("failed to grow version, stakerIndex is not continuous, new staker-index:%d, current max-index:%d", deposit.StakerIndex, len(s.SInfos))
+				return err
 			}
 			s.SInfos[uint32(deposit.StakerIndex)] = &StakerInfo{
 				Address:    deposit.StakerAddr,
@@ -874,40 +888,32 @@ func (s *Stakers) tryGrowVersionsFromCache(version uint64) error {
 				Balance:    deposit.Amount,
 			}
 		} else if !sInfo.AddValidator(deposit.Validator, deposit.Amount) {
-			s.downgradeVersion(i)
-			return fmt.Errorf("failed to grow version, validatorIndex already exists, staker-index:%d, validator:%s", deposit.StakerIndex, deposit.Validator)
+			err = fmt.Errorf("failed to grow version, validatorIndex already exists, staker-index:%d, validator:%s", deposit.StakerIndex, deposit.Validator)
+			return err
 		}
 	}
 	return nil
-
 }
 
-func (s *Stakers) growVersionsFromCache(version uint64) error {
-	if err := s.tryGrowVersionsFromCache(version); err != nil {
-		return err
-	}
-	// remove the versions before the current version
-	s.removeVersionsBefore(version)
-	return nil
-}
-
-// GrowVersionsFromCache grows the staker infos from the cache to a specific version.
-func (s *Stakers) GrowVersionsFromCache(version uint64) error {
-	if version < 2 {
-		return fmt.Errorf("version is less than 2, version:%d", version)
+// GrowVersionsFromCacheByDeposit grows the staker infos from the cache to a specific version.
+func (s *Stakers) GrowVersionsFromCacheByDeposit(version uint64) error {
+	if version < 1 {
+		return fmt.Errorf("version is less than 1, version:%d", version)
 	}
 	s.Locker.Lock()
 	defer s.Locker.Unlock()
-	if err := s.growVersionsFromCache(version); err != nil {
+
+	if err := s.tryGrowVersionsFromCache(version, true); err != nil {
 		return err
 	}
-	s.Version = version - 1
+	s.removeVersions(version)
+	s.Version = version
 	return nil
 }
 
-func (s *Stakers) removeVersionsBefore(version uint64) {
+func (s *Stakers) removeVersions(version uint64) {
 	for v := range s.SInfosAdd {
-		if v < version {
+		if v <= version {
 			delete(s.SInfosAdd, v)
 		}
 	}
@@ -922,10 +928,6 @@ func (s *Stakers) downgradeVersion(v uint64) {
 	}
 }
 
-func (s *Stakers) resetCacheDeposits() {
-	s.SInfosAdd = make(map[uint64]*DepositInfo)
-}
-
 // ApplyBalanceChanges applies balance changes from RawDataNST to the staker infos.
 func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version uint64) (err error) {
 	s.Locker.Lock()
@@ -935,14 +937,16 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 		return fmt.Errorf("version mismatch, current:%d, next:%d", s.Version, changes.Version)
 	}
 	// append cached validators from deposit
-	if err = s.tryGrowVersionsFromCache(version); err != nil {
+	if err = s.tryGrowVersionsFromCache(version, false); err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			s.downgradeVersion(version)
+			if version > 1 {
+				s.downgradeVersion(version)
+			}
 		} else {
-			s.removeVersionsBefore(version)
+			s.removeVersions(version)
 		}
 	}()
 	// Prepare to track stakers to remove and those to update
@@ -964,6 +968,12 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 			updated[uint32(change.StakerIndex)] = &tmp
 		}
 	}
+
+	// Apply all balance updates for stakers that remain
+	for sIdx, sInfo := range updated {
+		s.SInfos[sIdx] = sInfo
+	}
+
 	// Handle the removed stakers if any
 	if len(removed) > 0 {
 		// The following logic rotates the staker list to remove the specified indices
@@ -985,14 +995,19 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 		}
 
 		// Update the SInfos map to reflect the rotated staker list
-		for sIdx, address := range updatedAfterRotate {
-			s.SInfos[sIdx] = s.SInfos[revertIndex[address]]
-			delete(s.SInfos, revertIndex[address])
+		if len(updatedAfterRotate) > 0 {
+			deleted := make(map[uint32]bool)
+			for sIdx, address := range updatedAfterRotate {
+				s.SInfos[sIdx] = s.SInfos[revertIndex[address]]
+				delete(s.SInfos, revertIndex[address])
+				deleted[revertIndex[address]] = true
+			}
+			for _, removedIdx := range removed {
+				if _, ok := updatedAfterRotate[removedIdx]; !ok && !deleted[removedIdx] {
+					delete(s.SInfos, uint32(removedIdx))
+				}
+			}
 		}
-	}
-	// Apply all balance updates for stakers that remain
-	for sIdx, sInfo := range updated {
-		s.SInfos[sIdx] = sInfo
 	}
 	// Increment the version after successful application
 	s.Version = version
@@ -1018,6 +1033,7 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version *oracletypes.N
 		// we don't limit the staker size here, it's guaranteed by imuachain, and the size might not be equal to the biggest index
 		validators := make([]string, 0, len(sInfo.ValidatorList))
 		seenValidatorIdx := make(map[string]struct{})
+		pendingDepositAmount := uint64(0)
 		for _, validator := range sInfo.ValidatorList {
 			if _, ok := seenValidatorIdx[validator.ValidatorPubkey]; ok {
 				return fmt.Errorf("duplicated validatorIndex, validator-index-hex:%s", validator)
@@ -1031,6 +1047,7 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version *oracletypes.N
 					Validator:   validator.ValidatorPubkey,
 					Amount:      validator.DepositAmount,
 				}
+				pendingDepositAmount += validator.DepositAmount
 			}
 			seenValidatorIdx[validator.ValidatorPubkey] = struct{}{}
 		}
@@ -1039,10 +1056,15 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version *oracletypes.N
 		if l > 0 && sInfo.BalanceList[l-1] != nil && sInfo.BalanceList[l-1].Balance > 0 {
 			balance = uint64(sInfo.BalanceList[l-1].Balance)
 		}
-		tmp[uint32(sInfo.StakerIndex)] = &StakerInfo{
-			Address:    sInfo.StakerAddr,
-			Validators: validators,
-			Balance:    balance - (version.Version.DepositAmount - version.FeedVersion.DepositAmount),
+		if balance < pendingDepositAmount {
+			return fmt.Errorf("balance is less than pending deposit amount, staker-index:%d, balance:%d, pending-deposit-amount:%d", sInfo.StakerIndex, balance, pendingDepositAmount)
+		}
+		if len(validators) > 0 {
+			tmp[uint32(sInfo.StakerIndex)] = &StakerInfo{
+				Address:    sInfo.StakerAddr,
+				Validators: validators,
+				Balance:    balance - pendingDepositAmount,
+			}
 		}
 	}
 	if all {

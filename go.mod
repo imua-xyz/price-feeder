@@ -19,10 +19,13 @@ require (
 )
 
 require (
+	cosmossdk.io/log v1.3.0
 	github.com/cosmos/gogoproto v1.4.11
 	github.com/gagliardetto/solana-go v1.12.0
+	github.com/rs/zerolog v1.31.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/protobuf v1.33.0
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )
 
 require (
@@ -35,7 +38,6 @@ require (
 	cosmossdk.io/core v0.6.1 // indirect
 	cosmossdk.io/depinject v1.0.0-alpha.4 // indirect
 	cosmossdk.io/errors v1.0.1 // indirect
-	cosmossdk.io/log v1.3.0 // indirect
 	cosmossdk.io/math v1.2.0 // indirect
 	cosmossdk.io/tools/rosetta v0.2.1 // indirect
 	filippo.io/edwards25519 v1.0.0 // indirect
@@ -190,7 +192,6 @@ require (
 	github.com/rjeczalik/notify v0.9.3 // indirect
 	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/rs/cors v1.11.0 // indirect
-	github.com/rs/zerolog v1.31.0 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.1 // indirect
@@ -269,7 +270,7 @@ replace (
 	// Security Advisory https://github.com/advisories/GHSA-h395-qcrw-5vmq
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.9.1
 
-	github.com/imua-xyz/imuachain => github.com/leonz789/exocore v0.0.0-20250514021545-a0715cbcfea7
+	github.com/imua-xyz/imuachain => github.com/leonz789/exocore v0.0.0-20250522065346-bf51cd9e1513
 	// replace broken goleveldb
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	//fix cosmos-sdk error

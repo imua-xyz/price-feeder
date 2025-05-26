@@ -426,7 +426,7 @@ func (f *feeder) applyNSTBalanceUpdate(rootHash []byte, version uint64) error {
 
 	if bytes.Equal(rootHash, fetchertypes.EmptyRawDataChangesRootHash[:]) {
 		// this is a special case for empty raw data changes which is triggered by the staker's deposit, so we need to use version+1
-		if err := f.stakers.GrowVersionsFromCache(version + 1); err != nil {
+		if err := f.stakers.GrowVersionsFromCacheByDeposit(version); err != nil {
 			f.logger.Error("failed to grow versions from cache", "error", err, "next feed-version", version)
 			return err
 		}
@@ -756,7 +756,7 @@ func (f *feeder) start() {
 				} else {
 					f.logger.Info("successfully cached deposits", "updated cached-version", v, "feederID", f.feederID)
 					if v == 1 {
-						if err := f.stakers.GrowVersionsFromCache(v + 1); err != nil {
+						if err := f.stakers.GrowVersionsFromCacheByDeposit(v); err != nil {
 							f.logger.Error("failed to grow versions from cache on first deposit", "error", err, "feederID", f.feederID)
 							req.res <- err
 						} else {

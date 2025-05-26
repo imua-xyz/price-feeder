@@ -52,6 +52,16 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 
 	}
 	changes := make([]*oracletypes.NSTKV, 0, len(stakerValidators))
+	if len(stakerValidators) > 7 {
+		fmt.Println("trigger withdraw")
+		// 0,1,2,3,4,5,6,7,8 -> 0,_,2,_,_,5,6,7
+		// 0,_,2,_,_,5,6,7 -> 0,7,2,6,5
+		// mapping:
+		// 1->7, 3->6, 4->5
+		stakerChanges[1].Balance = 0
+		stakerChanges[3].Balance = 0
+		stakerChanges[4].Balance = 0
+	}
 	for stakerIndex, _ := range stakerValidators {
 		if stakerIndex > 10 {
 			continue
