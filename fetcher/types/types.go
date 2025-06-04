@@ -34,13 +34,15 @@ type SourceInf interface {
 	// GetName returns name of the source
 	GetName() string
 	// Status returns the status of all tokens configured in the source: running or not
-	Status() map[string]*tokenStatus
+	Status() map[string]*TokenStatus
 
 	// ReloadConfig reload the config file for the source
 	//	ReloadConfigForToken(string) error
 
 	// Stop closes all running routine generated from the source
 	Stop()
+
+	PriceUpdate() bool
 
 	// TODO: add some interfaces to achieve more fine-grained management
 	// StopToken(token string)
@@ -88,10 +90,11 @@ type tokenInfo struct {
 	price  *PriceSync
 	active *atomic.Bool
 }
-type tokenStatus struct {
-	name   string
-	price  PriceInfo
-	active bool
+
+type TokenStatus struct {
+	Name   string
+	Price  PriceInfo
+	Active bool
 }
 
 type addTokenReq struct {
@@ -226,6 +229,8 @@ type Source struct {
 	fetch            SourceFetchFunc
 	reload           SourceReloadConfigFunc
 	tokens           map[string]*tokenInfo
+	tokensSnapshot   atomic.Value
+	priceUpdate      *atomic.Bool
 	activeTokenCount *atomic.Int32
 	interval         time.Duration
 	addToken         chan *addTokenReq
@@ -300,8 +305,23 @@ func (s *Source) Start() map[string]*PriceSync {
 	// tokenNotConfigured to reload the source's config file for required token
 	// stop closes the source routines and set runnign status to false
 	go func() {
+		tic := time.NewTicker(s.interval)
 		for {
 			select {
+			// periodically update the snapshot of tokens
+			case <-tic.C:
+				if s.priceUpdate.Load() {
+					cpy := make(map[string]*TokenStatus)
+					for tokenName, token := range s.tokens {
+						cpy[tokenName] = &TokenStatus{
+							Name:   tokenName,
+							Price:  token.GetPrice(),
+							Active: token.GetActive(),
+						}
+					}
+					s.tokensSnapshot.Store(cpy)
+					s.priceUpdate.Store(false)
+				}
 			case req := <-s.addToken:
 				price := NewPriceSync()
 				// check token existence and then add to token list & start if not exists
@@ -409,6 +429,7 @@ func (s *Source) startFetchToken(token *tokenInfo) {
 					// update price
 					updated := token.price.Update(*price)
 					if updated {
+						s.priceUpdate.Store(true)
 						s.logger.Info("updated price", "source", s.name, "token", token.name, "price", *price)
 					}
 				}
@@ -428,31 +449,33 @@ func (s *Source) GetName() string {
 	return s.name
 }
 
-func (s *Source) Status() map[string]*tokenStatus {
-	s.locker.Lock()
-	ret := make(map[string]*tokenStatus)
-	for tName, token := range s.tokens {
-		ret[tName] = &tokenStatus{
-			name:   tName,
-			price:  token.price.Get(),
-			active: token.GetActive(),
-		}
+func (s *Source) PriceUpdate() bool {
+	return s.priceUpdate.Load()
+}
+
+func (s *Source) ResetPriceUpdate() {
+	s.priceUpdate.Store(false)
+}
+
+func (s *Source) Status() map[string]*TokenStatus {
+	ret := s.tokensSnapshot.Load()
+	if ret == nil {
+		return nil
 	}
-	s.locker.Unlock()
-	return ret
+	return ret.(map[string]*TokenStatus)
 }
 
 type NSTToken string
 
 const (
 	defaultPendingTokensLimit = 5
-	// defaultInterval           = 30 * time.Second
+	defaultInterval           = 30 * time.Second
 	// interval set for debug
-	defaultInterval = 5 * time.Second
-	Chainlink       = "chainlink"
-	BaseCurrency    = "usdt"
-	BeaconChain     = "beaconchain"
-	Solana          = "solana"
+	// defaultInterval = 5 * time.Second
+	Chainlink    = "chainlink"
+	BaseCurrency = "usdt"
+	BeaconChain  = "beaconchain"
+	Solana       = "solana"
 
 	NativeTokenETH NSTToken = "nsteth"
 	NativeTokenSOL NSTToken = "nstsol"

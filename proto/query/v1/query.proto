@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package query.v1;
+
+option go_package = "github.com/imua-xyz/price-feeder/proto/feeder";
+
+message Empty {}
+
+message HealthResponse {
+  bool alive = 1;
+}
+
+message GetPriceRequest {
+  string feeder_id = 1;
+}
+
+message PriceInfo {
+  string feeder_id = 1;
+  string price = 2;
+  string updated_at = 3;
+}
+
+message GetPriceResponse {
+  PriceInfo price_info = 1;
+}
+
+message PriceList {
+  repeated PriceInfo prices = 1;
+}
+
+service FeederStatus {
+  rpc HealthCheck(Empty) returns (HealthResponse);
+  rpc GetAllPrices(Empty) returns (PriceList);
+  rpc GetPrice(GetPriceRequest) returns (GetPriceResponse);
+}

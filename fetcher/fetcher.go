@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -15,6 +16,8 @@ import (
 const (
 	loggerTag       = "fetcher"
 	loggerTagPrefix = "fetcher_%s"
+
+	snapshotInterval = 30 * time.Second
 )
 
 var (
@@ -30,6 +33,7 @@ type Fetcher struct {
 	sources map[string]types.SourceInf
 	// source->map{token->price}
 	priceReadList   map[string]map[string]*types.PriceSync
+	tokensStatus    atomic.Value
 	addSourceToken  chan *addTokenForSourceReq
 	getLatestPrice  chan *getLatestPriceReq
 	setNSTStakersCh chan *setNSTStakersReq
@@ -135,8 +139,35 @@ func (f *Fetcher) Start() error {
 
 	go func() {
 		const timeout = 10 * time.Second
+		tic := time.NewTicker(snapshotInterval)
 		for {
 			select {
+			case <-tic.C:
+				cpy := make(map[string]map[string]*types.TokenStatus)
+				for sName, source := range f.sources {
+					status := source.Status()
+					cpy[sName] = status
+				}
+				f.tokensStatus.Store(cpy)
+
+				// for sName, source := range f.priceReadList {
+				// 	if !f.sources[sName].PriceUpdate() {
+				// 		continue
+				// 	}
+				// 	for tName, price := range source {
+				// 		if price == nil {
+				// 			f.logger.Error("price is nil", "source", sName, "token", tName)
+				// 			continue
+				// 		}
+				// 		p := price.Get()
+				// 		cpy[sName][tName] = &types.TokenStatus{
+				// 			Name:   tName,
+				// 			Price:  p,
+				// 			Active: true,
+				// 		}
+				// 	}
+				// }
+				f.tokensStatus.Store(cpy)
 			case req := <-f.addSourceToken:
 				timer := time.NewTimer(timeout)
 				select {
