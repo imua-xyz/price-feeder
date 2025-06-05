@@ -65,6 +65,9 @@ type Config struct {
 	Debugger struct {
 		Grpc string `mapstructure:"grpc"`
 	} `mapstructure:"debugger"`
+	Status struct {
+		Grpc int `mapstructure:"grpc"`
+	} `mapstructure:"status"`
 	Log LogConf `mapstructure:"log"`
 }
 

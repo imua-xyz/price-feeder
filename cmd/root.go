@@ -31,6 +31,9 @@ to quickly create a Cobra application.`,
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Name() == "version" || cmd.Name() == "status" {
+			return nil
+		}
 		// load and parse config file
 		var err error
 		feederConfig, err = feedertypes.InitConfig(cfgFile)
@@ -67,10 +70,14 @@ func init() {
 
 	startCmd.Flags().StringVarP(&mnemonic, "mnemonic", "m", "", "mnemonic of consensus key")
 	startCmd.Flags().StringVarP(&logPath, "log_path", "l", "", "log file name")
+	startCmd.Flags().IntVar(&grpcPort, "status_port", 0, "gRPC port to listen on for status server")
+
+	statusCmd.Flags().StringVarP(&grpcAddr, "grpc_addr", "g", "", "gRPC address to connect to the price feeder")
 
 	rootCmd.AddCommand(
 		startCmd,
 		debugStartCmd,
 		versionCmd,
+		statusCmd,
 	)
 }

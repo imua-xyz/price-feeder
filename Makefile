@@ -45,11 +45,5 @@ build:
 build-devmode:
 	go build -ldflags "$(LDFLAGS)" --tags devmode -o ./build/price-feeder
 
-PROTO_DIR := proto
 
-proto-gen:
-	@echo "Generating protobuf files..."
-	cd $(PROTO_DIR) && buf generate
-	cp -r 
-	
-.PHONY: build proto-gen
+.PHONY: build

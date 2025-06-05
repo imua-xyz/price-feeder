@@ -4,7 +4,7 @@
 // - protoc             (unknown)
 // source: query/v1/query.proto
 
-package feeder
+package types
 
 import (
 	context "context"
@@ -20,8 +20,7 @@ const _ = grpc.SupportPackageIsVersion7
 
 const (
 	FeederStatus_HealthCheck_FullMethodName  = "/query.v1.FeederStatus/HealthCheck"
-	FeederStatus_GetAllPrices_FullMethodName = "/query.v1.FeederStatus/GetAllPrices"
-	FeederStatus_GetPrice_FullMethodName     = "/query.v1.FeederStatus/GetPrice"
+	FeederStatus_GetAllTokens_FullMethodName = "/query.v1.FeederStatus/GetAllTokens"
 )
 
 // FeederStatusClient is the client API for FeederStatus service.
@@ -29,8 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type FeederStatusClient interface {
 	HealthCheck(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthResponse, error)
-	GetAllPrices(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*PriceList, error)
-	GetPrice(ctx context.Context, in *GetPriceRequest, opts ...grpc.CallOption) (*GetPriceResponse, error)
+	GetAllTokens(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GetAllTokensResponse, error)
 }
 
 type feederStatusClient struct {
@@ -50,18 +48,9 @@ func (c *feederStatusClient) HealthCheck(ctx context.Context, in *Empty, opts ..
 	return out, nil
 }
 
-func (c *feederStatusClient) GetAllPrices(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*PriceList, error) {
-	out := new(PriceList)
-	err := c.cc.Invoke(ctx, FeederStatus_GetAllPrices_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *feederStatusClient) GetPrice(ctx context.Context, in *GetPriceRequest, opts ...grpc.CallOption) (*GetPriceResponse, error) {
-	out := new(GetPriceResponse)
-	err := c.cc.Invoke(ctx, FeederStatus_GetPrice_FullMethodName, in, out, opts...)
+func (c *feederStatusClient) GetAllTokens(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GetAllTokensResponse, error) {
+	out := new(GetAllTokensResponse)
+	err := c.cc.Invoke(ctx, FeederStatus_GetAllTokens_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -73,8 +62,7 @@ func (c *feederStatusClient) GetPrice(ctx context.Context, in *GetPriceRequest, 
 // for forward compatibility
 type FeederStatusServer interface {
 	HealthCheck(context.Context, *Empty) (*HealthResponse, error)
-	GetAllPrices(context.Context, *Empty) (*PriceList, error)
-	GetPrice(context.Context, *GetPriceRequest) (*GetPriceResponse, error)
+	GetAllTokens(context.Context, *Empty) (*GetAllTokensResponse, error)
 	mustEmbedUnimplementedFeederStatusServer()
 }
 
@@ -85,11 +73,8 @@ type UnimplementedFeederStatusServer struct {
 func (UnimplementedFeederStatusServer) HealthCheck(context.Context, *Empty) (*HealthResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HealthCheck not implemented")
 }
-func (UnimplementedFeederStatusServer) GetAllPrices(context.Context, *Empty) (*PriceList, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetAllPrices not implemented")
-}
-func (UnimplementedFeederStatusServer) GetPrice(context.Context, *GetPriceRequest) (*GetPriceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetPrice not implemented")
+func (UnimplementedFeederStatusServer) GetAllTokens(context.Context, *Empty) (*GetAllTokensResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAllTokens not implemented")
 }
 func (UnimplementedFeederStatusServer) mustEmbedUnimplementedFeederStatusServer() {}
 
@@ -122,38 +107,20 @@ func _FeederStatus_HealthCheck_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _FeederStatus_GetAllPrices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _FeederStatus_GetAllTokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(FeederStatusServer).GetAllPrices(ctx, in)
+		return srv.(FeederStatusServer).GetAllTokens(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: FeederStatus_GetAllPrices_FullMethodName,
+		FullMethod: FeederStatus_GetAllTokens_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FeederStatusServer).GetAllPrices(ctx, req.(*Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _FeederStatus_GetPrice_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetPriceRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(FeederStatusServer).GetPrice(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: FeederStatus_GetPrice_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FeederStatusServer).GetPrice(ctx, req.(*GetPriceRequest))
+		return srv.(FeederStatusServer).GetAllTokens(ctx, req.(*Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -170,12 +137,8 @@ var FeederStatus_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _FeederStatus_HealthCheck_Handler,
 		},
 		{
-			MethodName: "GetAllPrices",
-			Handler:    _FeederStatus_GetAllPrices_Handler,
-		},
-		{
-			MethodName: "GetPrice",
-			Handler:    _FeederStatus_GetPrice_Handler,
+			MethodName: "GetAllTokens",
+			Handler:    _FeederStatus_GetAllTokens_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

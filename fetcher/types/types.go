@@ -33,8 +33,6 @@ type SourceInf interface {
 
 	// GetName returns name of the source
 	GetName() string
-	// Status returns the status of all tokens configured in the source: running or not
-	Status() map[string]*TokenStatus
 
 	// ReloadConfig reload the config file for the source
 	//	ReloadConfigForToken(string) error
@@ -43,6 +41,8 @@ type SourceInf interface {
 	Stop()
 
 	PriceUpdate() bool
+
+	ResetPriceUpdate()
 
 	// TODO: add some interfaces to achieve more fine-grained management
 	// StopToken(token string)
@@ -226,10 +226,10 @@ type Source struct {
 	locker    *sync.Mutex
 	stop      chan struct{}
 	// 'fetch' interacts directly with data source
-	fetch            SourceFetchFunc
-	reload           SourceReloadConfigFunc
-	tokens           map[string]*tokenInfo
-	tokensSnapshot   atomic.Value
+	fetch  SourceFetchFunc
+	reload SourceReloadConfigFunc
+	tokens map[string]*tokenInfo
+	// tokensSnapshot   atomic.Value
 	priceUpdate      *atomic.Bool
 	activeTokenCount *atomic.Int32
 	interval         time.Duration
@@ -249,6 +249,7 @@ func NewSource(logger feedertypes.LoggerInf, name string, fetch SourceFetchFunc,
 		stop:               make(chan struct{}),
 		tokens:             make(map[string]*tokenInfo),
 		activeTokenCount:   new(atomic.Int32),
+		priceUpdate:        new(atomic.Bool),
 		priceList:          make(map[string]*PriceSync),
 		interval:           defaultInterval,
 		addToken:           make(chan *addTokenReq, defaultPendingTokensLimit),
@@ -305,23 +306,8 @@ func (s *Source) Start() map[string]*PriceSync {
 	// tokenNotConfigured to reload the source's config file for required token
 	// stop closes the source routines and set runnign status to false
 	go func() {
-		tic := time.NewTicker(s.interval)
 		for {
 			select {
-			// periodically update the snapshot of tokens
-			case <-tic.C:
-				if s.priceUpdate.Load() {
-					cpy := make(map[string]*TokenStatus)
-					for tokenName, token := range s.tokens {
-						cpy[tokenName] = &TokenStatus{
-							Name:   tokenName,
-							Price:  token.GetPrice(),
-							Active: token.GetActive(),
-						}
-					}
-					s.tokensSnapshot.Store(cpy)
-					s.priceUpdate.Store(false)
-				}
 			case req := <-s.addToken:
 				price := NewPriceSync()
 				// check token existence and then add to token list & start if not exists
@@ -457,14 +443,6 @@ func (s *Source) ResetPriceUpdate() {
 	s.priceUpdate.Store(false)
 }
 
-func (s *Source) Status() map[string]*TokenStatus {
-	ret := s.tokensSnapshot.Load()
-	if ret == nil {
-		return nil
-	}
-	return ret.(map[string]*TokenStatus)
-}
-
 type NSTToken string
 
 const (
@@ -591,7 +569,6 @@ type Stakers struct {
 
 // GetCopy returns a deep copy of the StakerInfos map.
 func (sis StakerInfos) GetCopy() StakerInfos {
-	//	ret := make(map[uint64][]string)
 	ret := make(StakerInfos)
 	for idx, si := range sis {
 		ret[idx] = &StakerInfo{

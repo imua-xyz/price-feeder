@@ -9,6 +9,7 @@ import (
 	"cosmossdk.io/log"
 	tmlog "github.com/cometbft/cometbft/libs/log"
 	serverlog "github.com/cosmos/cosmos-sdk/server/log"
+	"github.com/imua-xyz/price-feeder/internal/status"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -16,8 +17,11 @@ import (
 
 const privFile = "priv_validator_key.json"
 
-var mnemonic string
-var logPath string
+var (
+	mnemonic string
+	logPath  string
+	grpcPort int
+)
 
 // startCmd represents the start command
 var startCmd = &cobra.Command{
@@ -37,8 +41,18 @@ to quickly create a Cobra application.`,
 		} else {
 			logger = feedertypes.NewLogger(feederConfig.Log)
 		}
-		RunPriceFeeder(feederConfig, logger, mnemonic, sourcesPath, true)
-		return nil
+		exitedCh, f := RunPriceFeeder(feederConfig, logger, mnemonic, sourcesPath, true)
+		if grpcPort <= 0 {
+			grpcPort = feederConfig.Status.Grpc
+		}
+		errCh := status.StartStatusServer(f, grpcPort)
+		select {
+		case err := <-errCh:
+			logger.Error("status server error", "error", err)
+			return err
+		case <-exitedCh:
+			return nil
+		}
 	},
 }
 
