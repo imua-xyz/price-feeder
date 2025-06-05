@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package query.v1;
+package status.v1;
 
-option go_package = "github.com/imua-xyz/price-feeder/query/types";
+option go_package = "github.com/imua-xyz/price-feeder/internal/status/types";
 
 message Empty {}
 

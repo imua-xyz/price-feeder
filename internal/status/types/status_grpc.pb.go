@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.3.0
 // - protoc             (unknown)
-// source: query/v1/query.proto
+// source: status/v1/status.proto
 
 package types
 
@@ -19,8 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	FeederStatus_HealthCheck_FullMethodName  = "/query.v1.FeederStatus/HealthCheck"
-	FeederStatus_GetAllTokens_FullMethodName = "/query.v1.FeederStatus/GetAllTokens"
+	FeederStatus_HealthCheck_FullMethodName  = "/status.v1.FeederStatus/HealthCheck"
+	FeederStatus_GetAllTokens_FullMethodName = "/status.v1.FeederStatus/GetAllTokens"
 )
 
 // FeederStatusClient is the client API for FeederStatus service.
@@ -129,7 +129,7 @@ func _FeederStatus_GetAllTokens_Handler(srv interface{}, ctx context.Context, de
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var FeederStatus_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "query.v1.FeederStatus",
+	ServiceName: "status.v1.FeederStatus",
 	HandlerType: (*FeederStatusServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -142,5 +142,5 @@ var FeederStatus_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "query/v1/query.proto",
+	Metadata: "status/v1/status.proto",
 }

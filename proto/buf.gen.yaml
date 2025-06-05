@@ -1,8 +1,8 @@
 version: v1
 plugins:
   - plugin: go
-    out: gen
+    out: ../ 
     opt: paths=import
   - plugin: go-grpc
-    out: gen
+    out: ../ 
     opt: paths=import

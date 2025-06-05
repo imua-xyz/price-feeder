@@ -9,6 +9,7 @@ import (
 	"cosmossdk.io/log"
 	tmlog "github.com/cometbft/cometbft/libs/log"
 	serverlog "github.com/cosmos/cosmos-sdk/server/log"
+	feeder "github.com/imua-xyz/price-feeder/internal/feeder"
 	"github.com/imua-xyz/price-feeder/internal/status"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 	"github.com/rs/zerolog"
@@ -41,7 +42,7 @@ to quickly create a Cobra application.`,
 		} else {
 			logger = feedertypes.NewLogger(feederConfig.Log)
 		}
-		exitedCh, f := RunPriceFeeder(feederConfig, logger, mnemonic, sourcesPath, true)
+		exitedCh, f := feeder.RunPriceFeeder(feederConfig, logger, mnemonic, sourcesPath, privFile, true)
 		if grpcPort <= 0 {
 			grpcPort = feederConfig.Status.Grpc
 		}

@@ -1,7 +1,8 @@
 package external
 
 import (
-	"github.com/imua-xyz/price-feeder/cmd"
+	"github.com/imua-xyz/price-feeder/internal/feeder"
+	itypes "github.com/imua-xyz/price-feeder/internal/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
@@ -24,7 +25,7 @@ func StartPriceFeeder(cfgFile, mnemonic, sourcesPath, logPath string, logger fee
 		logger = feedertypes.NewLogger(conf.Log)
 	}
 	// Start price feeder
-	cmd.RunPriceFeeder(conf, logger, mnemonic, sourcesPath, false)
+	feeder.RunPriceFeeder(conf, logger, mnemonic, sourcesPath, itypes.PrivFile, false)
 
 	return true
 }

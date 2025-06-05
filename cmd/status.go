@@ -38,7 +38,7 @@ var statusCmd = &cobra.Command{
 		)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				fmt.Println("Request timed out. Is the price feeder running?")
+				fmt.Println("Request timed out. price-feeder is not running properly")
 				return nil
 			}
 			return err

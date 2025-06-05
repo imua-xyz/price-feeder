@@ -1,4 +1,4 @@
-package cmd
+package feeder
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/imua-xyz/price-feeder/fetcher"
 	"github.com/imua-xyz/price-feeder/imuaclient"
+	itypes "github.com/imua-xyz/price-feeder/internal/types"
 	"github.com/imua-xyz/price-feeder/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,27 +18,21 @@ import (
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
-type RetryConfig struct {
-	MaxAttempts int
-	Attempts    int
-	Interval    time.Duration
-}
-
 // DefaultRetryConfig provides default retry settings
-var DefaultRetryConfig = RetryConfig{
+var DefaultRetryConfig = itypes.RetryConfig{
 	MaxAttempts: 43200, // defaultMaxRetry
 	Attempts:    5,
 	Interval:    2 * time.Second,
 }
 
 // RunPriceFeeder runs price feeder to fetching price and feed to imuachain
-func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnemonic string, sourcesPath string, standalone bool) (chan struct{}, *fetcher.Fetcher) {
+func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnemonic, sourcesPath, privFile string, standalone bool) (chan struct{}, *fetcher.Fetcher) {
 	// init logger
 	if logger = feedertypes.SetLogger(logger); logger == nil {
 		panic("logger is not initialized")
 	}
 	// init logger, fetchers, imuaclient
-	if err := initComponents(logger, conf, sourcesPath, mnemonic, standalone); err != nil {
+	if err := initComponents(logger, conf, sourcesPath, mnemonic, privFile, standalone); err != nil {
 		logger.Error("failed to initialize components")
 		panic(err)
 	}
@@ -50,9 +45,8 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 	}
 
 	ecClient, _ := imuaclient.GetClient()
-	defer ecClient.Close()
 	// initialize oracle params by querying from imua
-	oracleP, err := getOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ecClient, logger)
+	oracleP, err := itypes.GetOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ecClient, logger, DefaultRetryConfig)
 	if err != nil {
 		panic(fmt.Sprintf("failed to get initial oracle params: %v", err))
 	}
@@ -99,13 +93,14 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 
 	exited := make(chan struct{})
 	go func() {
+		defer ecClient.Close()
 		for event := range ecClient.EventsCh() {
 			switch e := event.(type) {
 			case *imuaclient.EventNewBlock:
 				logger.Debug("new block event received", "height", e.Height())
 				if e.ParamsUpdate() {
 					logger.Info("oracle params update detected, will try to get new params and update feeders correspondingly...")
-					oracleP, err = getOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ecClient, logger)
+					oracleP, err = itypes.GetOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ecClient, logger, DefaultRetryConfig)
 					if err != nil {
 						logger.Error(fmt.Sprintf("Failed to get oracle params with maxRetry when params update detected, price-feeder will exit, error:%v", err))
 						close(exited)
@@ -190,23 +185,6 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 	return exited, f
 }
 
-// getOracleParamsWithMaxRetry, get oracle params with max retry
-// blocked
-func getOracleParamsWithMaxRetry(maxRetry int, ecClient imuaclient.ImuaClientInf, logger feedertypes.LoggerInf) (oracleP *oracletypes.Params, err error) {
-	if maxRetry <= 0 {
-		maxRetry = DefaultRetryConfig.MaxAttempts
-	}
-	for i := 0; i < maxRetry; i++ {
-		oracleP, err = ecClient.GetParams()
-		if err == nil {
-			return
-		}
-		logger.Error("Failed to get oracle params, retrying...", "count", i, "max", maxRetry, "error", err)
-		time.Sleep(DefaultRetryConfig.Interval)
-	}
-	return
-}
-
 func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedertypes.LoggerInf, feeder *feeder, all bool) error {
 	count := 0
 	for count < DefaultRetryConfig.Attempts {
@@ -248,7 +226,7 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 }
 
 // initComponents, initialize fetcher, imuaclient, it will panic if any initialization fialed
-func initComponents(logger types.LoggerInf, conf *types.Config, sourcesPath, mnemonic string, standalone bool) error {
+func initComponents(logger types.LoggerInf, conf *types.Config, sourcesPath, mnemonic, privFile string, standalone bool) error {
 	count := 0
 	for count < DefaultRetryConfig.MaxAttempts {
 		count++
@@ -271,7 +249,7 @@ func initComponents(logger types.LoggerInf, conf *types.Config, sourcesPath, mne
 
 		ec, _ := imuaclient.GetClient()
 
-		_, err = getOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ec, logger)
+		_, err = itypes.GetOracleParamsWithMaxRetry(DefaultRetryConfig.MaxAttempts, ec, logger, DefaultRetryConfig)
 		if err != nil {
 			return fmt.Errorf("failed to get oracle params on start, error:%w", err)
 		}

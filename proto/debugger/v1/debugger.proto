@@ -1,7 +1,7 @@
 syntax = "proto3";
-package proto.debugger.v1;
+package debugger.v1;
 
-option go_package = "github.com/imua-xyz/price-feeder/debugger";
+option go_package = "github.com/imua-xyz/price-feeder/internal/debugger/types";
 
 service PriceSubmitService {
   rpc SubmitPrice(SubmitPriceRequest) returns (SubmitPriceResponse);
