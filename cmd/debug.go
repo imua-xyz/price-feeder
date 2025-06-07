@@ -98,6 +98,10 @@ var debugSendImmCmd = &cobra.Command{
 }
 
 func printProto(m proto.Message) {
+	if m == nil {
+		fmt.Println("nil proto message")
+		return
+	}
 	marshaled, err := protojson.MarshalOptions{EmitUnpopulated: true, UseProtoNames: true}.Marshal(m)
 	if err != nil {
 		fmt.Printf("failed to print proto message, error:%v", err)
