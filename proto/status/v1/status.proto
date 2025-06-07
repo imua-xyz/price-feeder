@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package status.v1;
+
+option go_package = "github.com/imua-xyz/price-feeder/internal/status/types";
+
+message Empty {}
+
+message HealthResponse {
+  bool alive = 1;
+}
+
+message TokenInfo {
+  string source = 1;
+  string token = 2;
+  string price = 3;
+  int32 decimals = 4;
+  string timestamp = 5;
+}
+
+message GetAllTokensResponse{
+  repeated TokenInfo tokens = 1;
+}
+
+service FeederStatus {
+  rpc HealthCheck(Empty) returns (HealthResponse);
+  rpc GetAllTokens(Empty) returns (GetAllTokensResponse);
+}
