@@ -40,7 +40,7 @@ type ValidatorPostRequest struct {
 
 const (
 	// the response from beaconchain represents ETH with 10^9 decimals
-	divisor = 1000000000
+	divisor = 1
 
 	urlQueryHeader          = "eth/v1/beacon/headers"
 	urlQueryHeaderFinalized = "eth/v1/beacon/headers/finalized"
