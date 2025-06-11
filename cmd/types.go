@@ -673,7 +673,7 @@ func (f *feeder) start() {
 							_, rootHash := f.AddRawData(roundID, []byte(price.Price), f.twoPhasesPieceSize)
 							if bytes.Equal(rootHash, []byte(f.lastPrice.price.Price)) {
 								f.logger.Info("didn't submit price for 1st-phase of 2phases due to price not changed", "roundID", roundID, "delta", delta, "price", price)
-								f.logger.Debug("got latesttprice(rootHash) equal to local cache", "feeder", f.Info())
+								f.logger.Debug("got latestprice(rootHash) equal to local cache", "feeder", f.Info())
 								continue
 							}
 						} else {
