@@ -89,7 +89,6 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	// Calculate epoch from slot
 	epoch := clSlot / slotsPerEpoch
 	// --- End CL/EL synchronization ---
-
 	// epoch not updated, just return without fetching since effective-balance has not changed
 	if epoch <= finalizedEpoch && version <= finalizedVersion {
 		s.logger.Info("fetch efb from beaconchain, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)

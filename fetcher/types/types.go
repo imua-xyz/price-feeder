@@ -995,17 +995,17 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 		}
 
 		// Update the SInfos map to reflect the rotated staker list
+		deleted := make(map[uint32]bool)
 		if len(updatedAfterRotate) > 0 {
-			deleted := make(map[uint32]bool)
 			for sIdx, address := range updatedAfterRotate {
 				s.SInfos[sIdx] = s.SInfos[revertIndex[address]]
 				delete(s.SInfos, revertIndex[address])
 				deleted[revertIndex[address]] = true
 			}
-			for _, removedIdx := range removed {
-				if _, ok := updatedAfterRotate[removedIdx]; !ok && !deleted[removedIdx] {
-					delete(s.SInfos, uint32(removedIdx))
-				}
+		}
+		for _, removedIdx := range removed {
+			if _, ok := updatedAfterRotate[removedIdx]; !ok && !deleted[removedIdx] {
+				delete(s.SInfos, uint32(removedIdx))
 			}
 		}
 	}
