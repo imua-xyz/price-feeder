@@ -1,11 +1,13 @@
 package types
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,7 +15,9 @@ import (
 
 	"slices"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/ethclient"
 	oraclecommon "github.com/imua-xyz/imuachain/x/oracle/keeper/common"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
@@ -1094,4 +1098,27 @@ func ConvertHexToIntStr(hexStr string) (string, error) {
 // ConvertBytesToIntStr converts a byte string to its integer string representation.
 func ConvertBytesToIntStr(bytesStr string) string {
 	return new(big.Int).SetBytes([]byte(bytesStr)).String()
+}
+
+func IsContractAddress(addr string, client *ethclient.Client, logger feedertypes.LoggerInf) bool {
+	if len(addr) == 0 {
+		logger.Error("contract address is empty")
+		return false
+	}
+
+	// Ensure it is an Ethereum address: 0x followed by 40 hexadecimal characters.
+	re := regexp.MustCompile("^0x[0-9a-fA-F]{40}$")
+	if !re.MatchString(addr) {
+		logger.Error(" contract address is not valid", "address", addr)
+		return false
+	}
+
+	// Ensure it is a contract address.
+	address := common.HexToAddress(addr)
+	bytecode, err := client.CodeAt(context.Background(), address, nil)
+	if err != nil {
+		logger.Error("failed to get code at contract address", "address", address, "error", err)
+		return false
+	}
+	return len(bytecode) > 0
 }

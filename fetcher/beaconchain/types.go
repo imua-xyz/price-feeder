@@ -37,7 +37,8 @@ type source struct {
 	logger  feedertypes.LoggerInf
 	stakers *fetchertypes.Stakers
 	*types.Source
-	ethClient *ethclient.Client
+	ethClient        *ethclient.Client
+	bootstrapAddress string // the address of the bootstrap contract, used to get capsule address for stakers
 }
 
 type config struct {
@@ -45,7 +46,8 @@ type config struct {
 		Beaconchain string `yaml:"beaconchain"`
 		ETH         string `yaml:"eth"`
 	} `yaml:"urls"`
-	NSTID string `yaml:"nstid"`
+	NSTID     string `yaml:"nstid"`
+	Bootstrap string `yaml:"bootstrap"` // the address of the bootstrap contract, used to get capsule address for stakers
 }
 
 type ResultConfig struct {
@@ -133,14 +135,21 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to connect to Ethereum node: %v", err))
 	}
 
+	if cfg.Bootstrap == "" {
+		return nil, feedertypes.ErrInitFail.Wrap("bootstrap address is not set")
+	}
+	if !types.IsContractAddress(cfg.Bootstrap, client, logger) {
+		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("bootstrap address is not a contract address: %s", cfg.Bootstrap))
+	}
 	// init first to get a fixed pointer for 'fetch' to refer to
 	defaultSource = &source{}
 
 	*defaultSource = source{
-		logger:    logger,
-		Source:    types.NewSource(logger, types.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
-		stakers:   types.NewStakers(),
-		ethClient: client,
+		logger:           logger,
+		Source:           types.NewSource(logger, types.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
+		stakers:          types.NewStakers(),
+		ethClient:        client,
+		bootstrapAddress: cfg.Bootstrap,
 	}
 
 	// update nst assetID to be consistent with imuad. for beaconchain it's about different lzID

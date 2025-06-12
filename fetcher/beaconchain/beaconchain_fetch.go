@@ -22,8 +22,7 @@ import (
 )
 
 const (
-	proxyAddressHex = "0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172"
-	zeroAddressHex  = "0x0000000000000000000000000000000000000000"
+	zeroAddressHex = "0x0000000000000000000000000000000000000000"
 )
 
 // Helper to get capsule balance
@@ -37,7 +36,7 @@ func getCapsuleBalance(ethClient *ethclient.Client, capsuleAddr string, blockNum
 }
 
 // getCapsuleAddressForStaker queries the ownerToCapsule(address) method on the proxy contract
-func getCapsuleAddressForStaker(ethClient *ethclient.Client, stakerAddr string, blockNumber *big.Int) (string, error) {
+func getCapsuleAddressForStaker(ethClient *ethclient.Client, stakerAddr string, blockNumber *big.Int, proxyAddressHex string) (string, error) {
 	if stakerAddr == "" {
 		return "", nil
 	}
@@ -133,7 +132,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		}
 
 		// Capsule balance integration
-		capsuleAddr, err := getCapsuleAddressForStaker(s.ethClient, stakerInfo.Address, blockNumber)
+		capsuleAddr, err := getCapsuleAddressForStaker(s.ethClient, stakerInfo.Address, blockNumber, s.bootstrapAddress)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get capsule address, staker_index:%d, staker:%s, err:%w", stakerIdx, stakerInfo.Address, err)
 		}

@@ -48,7 +48,7 @@ func (p *proxy) addToken(tokens map[string]string) error {
 	defer p.locker.Unlock()
 	for token, address := range tokens {
 		addrParsed := strings.Split(strings.TrimSpace(address), "_")
-		if ok := isContractAddress(addrParsed[0], p.clients[addrParsed[1]]); !ok {
+		if ok := types.IsContractAddress(addrParsed[0], p.clients[addrParsed[1]], logger); !ok {
 			return fmt.Errorf("invalid contract: address=%s chain=%s", addrParsed[0], addrParsed[1])
 		}
 		var err error
