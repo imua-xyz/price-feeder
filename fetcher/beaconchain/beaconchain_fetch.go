@@ -21,7 +21,10 @@ import (
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
-const proxyAddressHex = "0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172"
+const (
+	proxyAddressHex = "0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172"
+	zeroAddressHex  = "0x0000000000000000000000000000000000000000"
+)
 
 // Helper to get capsule balance
 func getCapsuleBalance(ethClient *ethclient.Client, capsuleAddr string, blockNumber *big.Int) (*big.Int, error) {
@@ -135,7 +138,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			return nil, fmt.Errorf("failed to get capsule address, staker_index:%d, staker:%s, err:%w", stakerIdx, stakerInfo.Address, err)
 		}
 
-		if len(capsuleAddr) == 0 || s.ethClient == nil {
+		if len(capsuleAddr) == 0 || capsuleAddr == zeroAddressHex || s.ethClient == nil {
 			return nil, fmt.Errorf("capsule address is empty:%t or ethClient is nil:%t, staker_index:%d, staker:%s", len(capsuleAddr) == 0, s.ethClient == nil, stakerIdx, stakerInfo.Address)
 		}
 
