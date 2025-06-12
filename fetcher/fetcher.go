@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -15,6 +16,8 @@ import (
 const (
 	loggerTag       = "fetcher"
 	loggerTagPrefix = "fetcher_%s"
+
+	snapshotInterval = 30 * time.Second
 )
 
 var (
@@ -30,6 +33,7 @@ type Fetcher struct {
 	sources map[string]types.SourceInf
 	// source->map{token->price}
 	priceReadList   map[string]map[string]*types.PriceSync
+	tokensStatus    atomic.Value
 	addSourceToken  chan *addTokenForSourceReq
 	getLatestPrice  chan *getLatestPriceReq
 	setNSTStakersCh chan *setNSTStakersReq
@@ -113,6 +117,13 @@ func (f *Fetcher) GetLatestPrice(source, token string) (types.PriceInfo, error) 
 	return result.price, result.err
 }
 
+func (f *Fetcher) GetTokensStatus() map[string]map[string]*types.TokenStatus {
+	if v, ok := f.tokensStatus.Load().(map[string]map[string]*types.TokenStatus); ok {
+		return v
+	}
+	return nil
+}
+
 func (f *Fetcher) Start() error {
 	f.locker.Lock()
 	if f.running {
@@ -135,8 +146,37 @@ func (f *Fetcher) Start() error {
 
 	go func() {
 		const timeout = 10 * time.Second
+		tic := time.NewTicker(snapshotInterval)
 		for {
 			select {
+			case <-tic.C:
+				cpy := make(map[string]map[string]*types.TokenStatus)
+				update := false
+				for sName, tokens := range f.priceReadList {
+					if !f.sources[sName].PriceUpdate() {
+						continue
+					}
+					for tName, price := range tokens {
+						if price == nil {
+							f.logger.Error("price is nil", "source", sName, "token", tName)
+							continue
+						}
+						p := price.Get()
+						if cpy[sName] == nil {
+							cpy[sName] = make(map[string]*types.TokenStatus)
+						}
+						cpy[sName][tName] = &types.TokenStatus{
+							Name:   tName,
+							Price:  p,
+							Active: true,
+						}
+					}
+					f.sources[sName].ResetPriceUpdate()
+					update = true
+				}
+				if update {
+					f.tokensStatus.Store(cpy)
+				}
 			case req := <-f.addSourceToken:
 				timer := time.NewTimer(timeout)
 				select {

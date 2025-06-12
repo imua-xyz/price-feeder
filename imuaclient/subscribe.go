@@ -235,6 +235,7 @@ func (ec imuaClient) startPingRoutine() bool {
 					ec.StopWsRoutines()
 					return
 				}
+				ec.logger.Debug("ping ws connection", "endpoint", ec.wsEndpoint)
 			case <-ec.wsStop:
 				logger.Info("close ws ping routine due to receiving close signal")
 				if err := ec.wsClient.WriteMessage(

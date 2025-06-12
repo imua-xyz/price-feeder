@@ -1,4 +1,4 @@
-package cmd
+package debugger
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 	"net"
 	"time"
 
-	"github.com/imua-xyz/price-feeder/debugger"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	"github.com/imua-xyz/price-feeder/imuaclient"
+	"github.com/imua-xyz/price-feeder/internal/debugger/types"
+	itypes "github.com/imua-xyz/price-feeder/internal/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -20,8 +21,8 @@ type sendReq struct {
 	height int64
 
 	feederID uint64
-	price    *debugger.PriceMsg
-	result   chan *debugger.SubmitPriceResponse
+	price    *types.PriceMsg
+	result   chan *types.SubmitPriceResponse
 }
 type pendingRequestManager map[int64][]*sendReq
 
@@ -42,7 +43,7 @@ func (p pendingRequestManager) process(height int64, handler func(*sendReq) erro
 		if h <= height {
 			for _, req := range pendings {
 				if err := handler(req); err != nil {
-					req.result <- &debugger.SubmitPriceResponse{Err: err.Error()}
+					req.result <- &types.SubmitPriceResponse{Err: err.Error()}
 				}
 			}
 			delete(p, h)
@@ -52,11 +53,11 @@ func (p pendingRequestManager) process(height int64, handler func(*sendReq) erro
 
 type server struct {
 	sendCh chan *sendReq
-	debugger.UnimplementedPriceSubmitServiceServer
+	types.UnimplementedPriceSubmitServiceServer
 }
 
-func (s *server) SubmitPrice(ctx context.Context, req *debugger.SubmitPriceRequest) (*debugger.SubmitPriceResponse, error) {
-	result := make(chan *debugger.SubmitPriceResponse, 1)
+func (s *server) SubmitPrice(ctx context.Context, req *types.SubmitPriceRequest) (*types.SubmitPriceResponse, error) {
+	result := make(chan *types.SubmitPriceResponse, 1)
 	s.sendCh <- &sendReq{
 		height:   req.Height,
 		feederID: req.FeederId,
@@ -82,7 +83,7 @@ type PriceJSON struct {
 	BaseBlock uint64 `json:"base_block"`
 }
 
-func (p PriceJSON) validate() error {
+func (p PriceJSON) Validate() error {
 	if len(p.Price) == 0 {
 		return errors.New("price is required")
 	}
@@ -105,13 +106,13 @@ func (p PriceJSON) getPriceInfo() fetchertypes.PriceInfo {
 }
 
 var (
-	DebugRetryConfig = RetryConfig{
+	DebugRetryConfig = itypes.RetryConfig{
 		MaxAttempts: 43200,
 		Interval:    2 * time.Second,
 	}
 )
 
-func DebugPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnemonic string, sourcesPath string) {
+func DebugPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnemonic, sourcesPath, privFile string) {
 	// init logger
 	if logger = feedertypes.SetLogger(logger); logger == nil {
 		panic("logger is not initialized")
@@ -123,7 +124,7 @@ func DebugPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mn
 	for count < DebugRetryConfig.MaxAttempts {
 		if err := imuaclient.Init(conf, mnemonic, privFile, false, true); err != nil {
 			if errors.Is(err, feedertypes.ErrInitConnectionFail) {
-				logger.Info("retry initComponents due to connectionfailed", "count", count, "maxRetry", DefaultRetryConfig.MaxAttempts, "error", err)
+				logger.Info("retry initComponents due to connectionfailed", "count", count, "maxRetry", DebugRetryConfig.MaxAttempts, "error", err)
 				time.Sleep(DebugRetryConfig.Interval)
 				continue
 			}
@@ -134,7 +135,7 @@ func DebugPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mn
 	}
 	ec, _ := imuaclient.GetClient()
 
-	_, err := getOracleParamsWithMaxRetry(DebugRetryConfig.MaxAttempts, ec, logger)
+	_, err := itypes.GetOracleParamsWithMaxRetry(DebugRetryConfig.MaxAttempts, ec, logger, DebugRetryConfig)
 	if err != nil {
 		logger.Error("failed to get oracle params", "error", err)
 		return
@@ -160,7 +161,7 @@ func DebugPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mn
 							logger.Error("failed to send tx", "error", err)
 							return err
 						}
-						req.result <- &debugger.SubmitPriceResponse{
+						req.result <- &types.SubmitPriceResponse{
 							CheckTxSuccess:   res.CheckTx.Code == 0,
 							CheckTxLog:       res.CheckTx.Log,
 							DeliverTxSuccess: res.CheckTx.Code == 0 && res.DeliverTx.Code == 0,
@@ -183,14 +184,14 @@ func DebugPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mn
 		return
 	}
 	grpcServer := grpc.NewServer()
-	debugger.RegisterPriceSubmitServiceServer(grpcServer, newServer(sendCh))
+	types.RegisterPriceSubmitServiceServer(grpcServer, newServer(sendCh))
 	if err := grpcServer.Serve(lis); err != nil {
 		fmt.Printf("failed to serve:%v\r\n", err)
 		return
 	}
 }
 
-func sendTx(feederID uint64, height int64, price *debugger.PriceMsg, port string) (*debugger.SubmitPriceResponse, error) {
+func SendTx(feederID uint64, height int64, price *types.PriceMsg, port string) (*types.SubmitPriceResponse, error) {
 	conn, err := grpc.Dial(
 		fmt.Sprintf("localhost%s", port),
 		//		"localhost:50051",
@@ -201,15 +202,15 @@ func sendTx(feederID uint64, height int64, price *debugger.PriceMsg, port string
 		return nil, err
 	}
 	defer conn.Close()
-	c := debugger.NewPriceSubmitServiceClient(conn)
-	return c.SubmitPrice(context.Background(), &debugger.SubmitPriceRequest{
+	c := types.NewPriceSubmitServiceClient(conn)
+	return c.SubmitPrice(context.Background(), &types.SubmitPriceRequest{
 		Height:   height,
 		FeederId: feederID,
 		Price:    price,
 	})
 }
 
-func sendTxImmediately(feederID uint64, price *PriceJSON) (*debugger.SubmitPriceResponse, error) {
+func SendTxImmediately(feederID uint64, price *PriceJSON, mnemonic, privFile string, feederConfig *feedertypes.Config) (*types.SubmitPriceResponse, error) {
 	if err := imuaclient.Init(feederConfig, mnemonic, privFile, true, true); err != nil {
 		return nil, fmt.Errorf("failed to init imuaclient in txOnly mode for debug, error:%w", err)
 	}
@@ -220,7 +221,7 @@ func sendTxImmediately(feederID uint64, price *PriceJSON) (*debugger.SubmitPrice
 	if err != nil {
 		return nil, err
 	}
-	protoRes := &debugger.SubmitPriceResponse{
+	protoRes := &types.SubmitPriceResponse{
 		CheckTxSuccess:   res.CheckTx.Code == 0,
 		CheckTxLog:       res.CheckTx.Log,
 		DeliverTxSuccess: res.CheckTx.Code == 0 && res.DeliverTx.Code == 0,
