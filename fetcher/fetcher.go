@@ -58,9 +58,10 @@ type getLatestPriceRes struct {
 }
 
 type setNSTStakersReq struct {
-	sourceName string
-	sInfos     types.StakerInfos
-	version    uint64
+	sourceName      string
+	sInfos          types.StakerInfos
+	version         uint64
+	withdrawVersion uint64
 }
 
 func newGetLatestPriceReq(source, token string) (*getLatestPriceReq, chan *getLatestPriceRes) {
@@ -104,8 +105,8 @@ func (f *Fetcher) AddTokenForSourceUnBlocked(source, token string) {
 	}
 }
 
-func (f *Fetcher) SetNSTStakers(sourceName string, sInfos types.StakerInfos, version uint64) {
-	f.setNSTStakersCh <- &setNSTStakersReq{sourceName: sourceName, sInfos: sInfos, version: version}
+func (f *Fetcher) SetNSTStakers(sourceName string, sInfos types.StakerInfos, version uint64, withdrawVersion uint64) {
+	f.setNSTStakersCh <- &setNSTStakersReq{sourceName: sourceName, sInfos: sInfos, version: version, withdrawVersion: withdrawVersion}
 }
 
 // GetLatestPrice return the queried price for the token from specified source
@@ -240,7 +241,7 @@ func (f *Fetcher) Start() error {
 					if !ok {
 						f.logger.Error("failed to set NST stakers for a source which doesn't support NST stakers", "source", req.sourceName)
 					}
-					sNST.SetNSTStakers(req.sInfos, req.version)
+					sNST.SetNSTStakers(req.sInfos, req.version, req.withdrawVersion)
 				}
 			case <-f.stop:
 				f.locker.Lock()

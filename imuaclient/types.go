@@ -44,14 +44,20 @@ type EventInf interface {
 	Type() EventType
 }
 
+type FeedVersion struct {
+	Version         uint64
+	WithdrawVersion uint64
+}
+
 type EventNewBlock struct {
-	height          int64
-	gas             string
-	paramsUpdate    bool
-	nstStakers      EventNSTStakers
-	nstBalances     EventNSTBalances
-	feederIDs       map[int64]struct{}
-	nstFeedVersions map[uint64]uint64
+	height       int64
+	gas          string
+	paramsUpdate bool
+	nstStakers   EventNSTStakers
+	nstBalances  EventNSTBalances
+	feederIDs    map[int64]struct{}
+	// nstFeedVersions map[uint64]uint64
+	nstFeedVersions map[uint64]*FeedVersion
 }
 
 func (s *SubscribeResult) GetEventNewBlock() (*EventNewBlock, error) {
@@ -125,7 +131,7 @@ func (e *EventNewBlock) NSTFeedVersionsUpdate() bool {
 	return len(e.nstFeedVersions) > 0
 }
 
-func (e *EventNewBlock) NSTFeedVersions() map[uint64]uint64 {
+func (e *EventNewBlock) NSTFeedVersions() map[uint64]*FeedVersion {
 	return e.nstFeedVersions
 }
 
@@ -136,8 +142,9 @@ func (e *EventNewBlock) ConvertNSTBalanceChangesFromFeedVersions() EventNSTBalan
 	ret := make(EventNSTBalances)
 	for feederID, version := range e.nstFeedVersions {
 		ret[feederID] = &EventNSTBalance{
-			rootHash: fetchertypes.EmptyRawDataChangesRootHash[:],
-			version:  version,
+			rootHash:        fetchertypes.EmptyRawDataChangesRootHash[:],
+			version:         version.Version,
+			withdrawVersion: version.WithdrawVersion,
 		}
 	}
 	return ret
@@ -213,16 +220,17 @@ func (e *EventUpdatePrice) Type() EventType {
 type EventNSTBalances map[uint64]*EventNSTBalance
 
 type EventNSTBalance struct {
-	rootHash []byte
-	version  uint64
+	rootHash        []byte
+	version         uint64
+	withdrawVersion uint64
 }
 
 func (e *EventNSTBalance) RootHash() []byte {
 	return e.rootHash
 }
 
-func (e *EventNSTBalance) Version() uint64 {
-	return e.version
+func (e *EventNSTBalance) Versions() (uint64, uint64) {
+	return e.version, e.withdrawVersion
 }
 
 func (e EventNSTBalances) Type() EventType {
@@ -237,7 +245,7 @@ func (s *SubscribeResult) getEventNSTBalances() (EventNSTBalances, error) {
 
 	for _, nstBC := range s.Result.Events.NSTBalanceChange {
 		tmp := strings.Split(nstBC, "|")
-		if len(tmp) != 3 {
+		if len(tmp) != 4 {
 			return nil, errors.New("failed to parse nstBalanceChange from event_txUpdateNSTBalance response, expected 3 parts")
 		}
 		feederID, err := strconv.ParseUint(tmp[2], 10, 64)
@@ -248,13 +256,19 @@ func (s *SubscribeResult) getEventNSTBalances() (EventNSTBalances, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse version from nstBalanceChange in event_txUpdateNSTBalance response, feederID:%d, error:%w", feederID, err)
 		}
+		withdrawVersion, err := strconv.ParseUint(tmp[3], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse withdrawVersion from nstBalanceChange in event_txUpdateNSTBalance response, feederID:%d, error:%w", feederID, err)
+		}
+
 		rootHash, err := base64.StdEncoding.DecodeString(tmp[0])
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse rootHash from nstBalanceChange in event_txUpdateNSTBalance response, feederID:%d, error:%w", feederID, err)
 		}
 		ret[feederID] = &EventNSTBalance{
-			rootHash: rootHash,
-			version:  version,
+			rootHash:        rootHash,
+			version:         version,
+			withdrawVersion: withdrawVersion,
 		}
 	}
 	return ret, nil
@@ -290,6 +304,7 @@ func (s *SubscribeResult) GetEventNSTPiece() (EventNSTPieces, error) {
 type EventNSTStakers map[uint64]*EventNSTStaker
 
 type EventNSTStaker struct {
+	withdraws                  []*fetchertypes.WithdrawInfo
 	deposits                   map[uint64]*fetchertypes.DepositInfo
 	nextVersion, latestVersion uint64
 }
@@ -301,6 +316,13 @@ func (e *EventNSTStaker) Deposits() map[uint64]*fetchertypes.DepositInfo {
 	return e.deposits
 }
 
+func (e *EventNSTStaker) Withdraws() []*fetchertypes.WithdrawInfo {
+	if e == nil {
+		return nil
+	}
+	return e.withdraws
+}
+
 func (e *EventNSTStaker) Versions() (uint64, uint64) {
 	if e == nil {
 		return 0, 0
@@ -308,14 +330,16 @@ func (e *EventNSTStaker) Versions() (uint64, uint64) {
 	return e.nextVersion, e.latestVersion
 }
 
-func (s *SubscribeResult) GetFeedVersions() (map[uint64]uint64, error) {
+// func (s *SubscribeResult) GetFeedVersions() (map[uint64]uint64, error) {
+func (s *SubscribeResult) GetFeedVersions() (map[uint64]*FeedVersion, error) {
 	if len(s.Result.Events.NSTFeedVersion) < 1 {
 		return nil, errors.New("failed to get feedVersion from event_newBlock response")
 	}
-	ret := make(map[uint64]uint64)
+	// ret := make(map[uint64]uint64)
+	ret := make(map[uint64]*FeedVersion)
 	for _, feedVersion := range s.Result.Events.NSTFeedVersion {
 		tmp := strings.Split(feedVersion, "_")
-		if len(tmp) != 2 {
+		if len(tmp) != 3 {
 			return nil, errors.New("failed to parse feedVersion from event_newBlock response, expected 2 parts")
 		}
 		feederID, err := strconv.ParseUint(tmp[0], 10, 64)
@@ -326,7 +350,15 @@ func (s *SubscribeResult) GetFeedVersions() (map[uint64]uint64, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse version from feedVersion in event_newBlock response, error:%w", err)
 		}
-		ret[feederID] = version
+		withdrawVersion, err := strconv.ParseUint(tmp[2], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse version from feedVersion in event_newBlock response, error:%w", err)
+		}
+
+		ret[feederID] = &FeedVersion{
+			Version:         version,
+			WithdrawVersion: withdrawVersion,
+		}
 	}
 	return ret, nil
 }
@@ -365,13 +397,22 @@ func (s *SubscribeResult) getEventNSTStakers() (EventNSTStakers, error) {
 
 		if eInfo = ret[feederID]; eInfo == nil {
 			eInfo = &EventNSTStaker{
-				deposits: make(map[uint64]*fetchertypes.DepositInfo),
+				deposits:  make(map[uint64]*fetchertypes.DepositInfo),
+				withdraws: make([]*fetchertypes.WithdrawInfo, 0),
 			}
 			ret[feederID] = eInfo
 		}
 		version, err := strconv.ParseUint(parsed[4], 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse beaconchain_sync_index in nstChange from event_txUpdateNST response, error:%w", err)
+		}
+		if parsed[3] == withdrawValidator {
+			// withdraw
+			eInfo.withdraws = append(eInfo.withdraws, &fetchertypes.WithdrawInfo{
+				StakerIndex:     stakerIndex,
+				WithdrawVersion: version,
+			})
+			continue
 		}
 		if _, exists := eInfo.deposits[version]; exists {
 			return nil, fmt.Errorf("failed to parse nstChange: duplicate version %d in nstChange", version)
@@ -546,8 +587,9 @@ func (s *SubscribeResult) Fee() (string, bool) {
 
 const (
 	// current version of 'Oracle' only support id=1(chainlink) as valid source
-	Chainlink uint64 = 1
-	denom            = "hua"
+	Chainlink         uint64 = 1
+	denom                    = "hua"
+	withdrawValidator        = "0xFFFFFFFFFFFFFFFF"
 )
 
 const (

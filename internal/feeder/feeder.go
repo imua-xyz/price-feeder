@@ -87,8 +87,6 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 		if err := ResetNSTStakers(ecClient, assetID, logger, feeder, true); err != nil {
 			panic(fmt.Sprintf("failed to init nst stakers, assetID:%s, error:%s", assetID, err.Error()))
 		}
-		sInfos, version := feeder.stakers.GetStakerInfos()
-		feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, version)
 	}
 
 	exited := make(chan struct{})
@@ -126,12 +124,8 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 						logger.Error("failed to update stakerInfos for nst, do resetAll", "feederID", f.feederID, "error", f.err)
 						feeder := feeders.feederMap[int(f.feederID)]
 						// the return error is just logged and waiting for next round to update for those nsts which failed to reset their staker infos
-						err = ResetNSTStakers(ecClient, fetchertypes.GetNSTAssetID(fetchertypes.NSTToken(feeder.token)), logger, feeder, true)
-						if err != nil {
+						if err = ResetNSTStakers(ecClient, fetchertypes.GetNSTAssetID(fetchertypes.NSTToken(feeder.token)), logger, feeder, true); err != nil {
 							logger.Error("failed to resetAll nst stakers for fail updating", "feederID", f.feederID, "error", err)
-						} else {
-							sInfos, version := feeder.stakers.GetStakerInfos()
-							feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, version)
 						}
 					}
 				}
@@ -146,12 +140,8 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 						logger.Error("failed to update stakerInfos for nst, do resetAll", "feederID", f.feederID, "error", f.err)
 						feeder := feeders.feederMap[int(f.feederID)]
 						// the return error is just logged and waiting for next round to update for those nsts which failed to reset their staker infos
-						err = ResetNSTStakers(ecClient, fetchertypes.GetNSTAssetID(fetchertypes.NSTToken(feeder.token)), logger, feeder, true)
-						if err != nil {
+						if err = ResetNSTStakers(ecClient, fetchertypes.GetNSTAssetID(fetchertypes.NSTToken(feeder.token)), logger, feeder, true); err != nil {
 							logger.Error("failed to resetAll nst stakers for fail updating", "feederID", f.feederID, "error", err)
-						} else {
-							sInfos, version := feeder.stakers.GetStakerInfos()
-							feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, version)
 						}
 					}
 				}
@@ -219,6 +209,11 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 			logger.Error("failed to update stakers for native-restaking-token", "feederID", feeder.feederID, "token", feeder.token, "error", err)
 			count++
 			continue
+		}
+
+		sInfos, feedVersion, withdrawVersion := feeder.stakers.GetStakerInfos()
+		if len(sInfos) > 0 {
+			feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, feedVersion, withdrawVersion)
 		}
 		return nil
 	}

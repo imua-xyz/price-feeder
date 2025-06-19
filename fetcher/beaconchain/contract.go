@@ -12,11 +12,17 @@ import (
 )
 
 // ABI for all needed methods on BootstrapStorage
-const bootstrapStorageABI = `[
-  {"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"ownerToCapsule","outputs":[{"name":"","type":"address"}],"payable":false,"stateMutability":"view","type":"function"},
+const (
+	bootstrapStorageABI = `[
+{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"ownerToCapsule","outputs":[{"name":"","type":"address"}],"payable":false,"stateMutability":"view","type":"function"},
   {"constant":true,"inputs":[{"name":"","type":"uint256"}],"name":"whitelistTokens","outputs":[{"name":"","type":"address"}],"payable":false,"stateMutability":"view","type":"function"},
   {"constant":true,"inputs":[],"name":"getWhitelistedTokensCount","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"}
 ]`
+	capsuleABI = `[
+{"constant":true,"inputs":[],"name":"inWithdrawProgress","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+{"constant":true,"inputs":[],"name":"withdrawableBalance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+	]`
+)
 
 // CallOwnerToCapsule queries the ownerToCapsule(address) method on the proxy contract
 func CallOwnerToCapsule(

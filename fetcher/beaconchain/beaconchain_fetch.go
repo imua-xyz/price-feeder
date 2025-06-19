@@ -26,13 +26,62 @@ const (
 )
 
 // Helper to get capsule balance
-func getCapsuleBalance(ethClient *ethclient.Client, capsuleAddr string, blockNumber *big.Int) (*big.Int, error) {
+// returns: balance(balance-withdrawableBalance, valid, error); valid indicates whether the capsule is in withdrawal progress
+func getCapsuleValidBalance(ethClient *ethclient.Client, capsuleAddr string, blockNumber *big.Int) (*big.Int, bool, error) {
 	address := common.HexToAddress(capsuleAddr)
+	var valid bool
+	parsedABI, err := abi.JSON(strings.NewReader(capsuleABI))
+	if err != nil {
+		return nil, valid, err
+	}
+
+	callData, err := parsedABI.Pack("inWithdrawProgress")
+	if err != nil {
+		return nil, valid, err
+	}
+
+	callMsg := ethereum.CallMsg{
+		To:   &address,
+		Data: callData,
+	}
+	output, err := ethClient.CallContract(context.Background(), callMsg, blockNumber)
+	if err != nil {
+		return nil, valid, err
+	}
+
+	var inWithdrawProgress bool
+	err = parsedABI.UnpackIntoInterface(&inWithdrawProgress, "inWithdrawProgress", output)
+	if err != nil || inWithdrawProgress {
+		return nil, valid, err
+	}
+
+	valid = true
+	callData, err = parsedABI.Pack("withdrawableBalance")
+	if err != nil {
+		return nil, valid, err
+	}
+
+	callMsg = ethereum.CallMsg{To: &address, Data: callData}
+	output, err = ethClient.CallContract(context.Background(), callMsg, blockNumber)
+	if err != nil {
+		return nil, valid, err
+	}
+
+	var withdrawable *big.Int
+	err = parsedABI.UnpackIntoInterface(&withdrawable, "withdrawableBalance", output)
+	if err != nil {
+		return nil, valid, err
+	}
+
 	balance, err := ethClient.BalanceAt(context.Background(), address, blockNumber)
 	if err != nil {
-		return nil, err
+		return nil, valid, err
 	}
-	return balance, nil
+	if balance.Cmp(withdrawable) < 0 {
+		return nil, valid, fmt.Errorf("capsule balance %s is less than withdrawable balance %s", balance.String(), withdrawable.String())
+	}
+	balance.Sub(balance, withdrawable)
+	return balance, valid, nil
 }
 
 // getCapsuleAddressForStaker queries the ownerToCapsule(address) method on the proxy contract
@@ -76,7 +125,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	}
 
 	// use 'no copy' version to avoid copying stakers
-	sInfos, version := s.stakers.GetStakersNoCopy()
+	sInfos, version, withdrawVersion := s.stakers.GetStakersNoCopy()
 	if len(sInfos) == 0 {
 		// return zero price when there's no stakers
 		return &types.PriceInfo{}, nil
@@ -106,9 +155,35 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	hasEFBChanged := false
 	for stakerIdx, stakerInfo := range sInfos {
 		validators := stakerInfo.Validators
-		stakerBalance := uint64(0)
-		// beaconcha.in support at most 100 validators for one request
 		l := len(validators)
+		if l == 0 {
+			continue
+		}
+		stakerBalance := uint64(0)
+		// Capsule balance integration
+		capsuleAddr, err := getCapsuleAddressForStaker(s.ethClient, stakerInfo.Address, blockNumber, s.bootstrapAddress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get capsule address, staker_index:%d, staker:%s, err:%w", stakerIdx, stakerInfo.Address, err)
+		}
+
+		if len(capsuleAddr) == 0 || capsuleAddr == zeroAddressHex || s.ethClient == nil {
+			return nil, fmt.Errorf("capsule address is empty:%t or ethClient is nil:%t, staker_index:%d, staker:%s", len(capsuleAddr) == 0, s.ethClient == nil, stakerIdx, stakerInfo.Address)
+		}
+
+		capsuleBalance, valid, err := getCapsuleValidBalance(s.ethClient, capsuleAddr, blockNumber)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get capsule balance, staker_index:%d, capsule:%s, err:%w", stakerIdx, capsuleAddr, err)
+		}
+		if !valid {
+			// skip this staker
+			continue
+		}
+
+		capsuleBalanceGwei := new(big.Int).Div(capsuleBalance, big.NewInt(1e9))
+		stakerBalance += capsuleBalanceGwei.Uint64()
+		// --- End capsule balance integration ---
+
+		// beaconcha.in support at most 100 validators for one request
 		i := 0
 		for l > 100 {
 			tmpValidatorPubkeys := validators[i : i+100]
@@ -123,6 +198,10 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			}
 		}
 
+		// capsuleBalanceGwei := new(big.Int).Div(capsuleBalance, big.NewInt(1e9))
+		// stakerBalance += capsuleBalanceGwei.Uint64()
+		// --- End capsule balance integration ---
+
 		validatorBalances, err := getValidators(validators[i:], stateRoot, epoch)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get validators from beaconchain, error:%w", err)
@@ -132,22 +211,22 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		}
 
 		// Capsule balance integration
-		capsuleAddr, err := getCapsuleAddressForStaker(s.ethClient, stakerInfo.Address, blockNumber, s.bootstrapAddress)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get capsule address, staker_index:%d, staker:%s, err:%w", stakerIdx, stakerInfo.Address, err)
-		}
-
-		if len(capsuleAddr) == 0 || capsuleAddr == zeroAddressHex || s.ethClient == nil {
-			return nil, fmt.Errorf("capsule address is empty:%t or ethClient is nil:%t, staker_index:%d, staker:%s", len(capsuleAddr) == 0, s.ethClient == nil, stakerIdx, stakerInfo.Address)
-		}
-
-		capsuleBalance, err := getCapsuleBalance(s.ethClient, capsuleAddr, blockNumber)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get capsule balance, staker_index:%d, capsule:%s, err:%w", stakerIdx, capsuleAddr, err)
-		}
-
-		capsuleBalanceGwei := new(big.Int).Div(capsuleBalance, big.NewInt(1e9))
-		stakerBalance += capsuleBalanceGwei.Uint64()
+		//		capsuleAddr, err := getCapsuleAddressForStaker(s.ethClient, stakerInfo.Address, blockNumber, s.bootstrapAddress)
+		//		if err != nil {
+		//			return nil, fmt.Errorf("failed to get capsule address, staker_index:%d, staker:%s, err:%w", stakerIdx, stakerInfo.Address, err)
+		//		}
+		//
+		//		if len(capsuleAddr) == 0 || capsuleAddr == zeroAddressHex || s.ethClient == nil {
+		//			return nil, fmt.Errorf("capsule address is empty:%t or ethClient is nil:%t, staker_index:%d, staker:%s", len(capsuleAddr) == 0, s.ethClient == nil, stakerIdx, stakerInfo.Address)
+		//		}
+		//
+		//		capsuleBalance, valid, err := getCapsuleValidBalance(s.ethClient, capsuleAddr, blockNumber)
+		//		if err != nil {
+		//			return nil, fmt.Errorf("failed to get capsule balance, staker_index:%d, capsule:%s, err:%w", stakerIdx, capsuleAddr, err)
+		//		}
+		//
+		//		capsuleBalanceGwei := new(big.Int).Div(capsuleBalance, big.NewInt(1e9))
+		//		stakerBalance += capsuleBalanceGwei.Uint64()
 		// --- End capsule balance integration ---
 
 		if stakerBalance != stakerInfo.Balance {
@@ -166,6 +245,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		})
 		nstBC := oracletypes.RawDataNST{
 			Version:           version,
+			WithdrawVersion:   withdrawVersion,
 			NstBalanceChanges: changedStakerBalances,
 		}
 		bz, err := proto.Marshal(&nstBC)

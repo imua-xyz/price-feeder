@@ -36,7 +36,7 @@ type PriceFetcher interface {
 
 type PriceFetcherNST interface {
 	PriceFetcher
-	SetNSTStakers(sourceName string, sInfos fetchertypes.StakerInfos, version uint64)
+	SetNSTStakers(sourceName string, sInfos fetchertypes.StakerInfos, version uint64, withdrawVersion uint64)
 }
 
 type priceSubmitter interface {
@@ -419,14 +419,14 @@ func (f *feeder) updateNSTPieceIndex(index uint32) error {
 // it will update the stakers and related source information by invoking fetcherNST
 // it finds the finalized raw data by rootHash from finalizedTree and apply the balance changes, and will return error if no finalized raw data found
 // this is used to sync the balance changes from imuachain to the feeder
-func (f *feeder) applyNSTBalanceUpdate(rootHash []byte, version uint64) error {
+func (f *feeder) applyNSTBalanceUpdate(rootHash []byte, version uint64, withdrawVersion uint64) error {
 	if f.twoPhasesInfo == nil {
 		return errors.New("two phases not enabled for this feeder")
 	}
 
 	if bytes.Equal(rootHash, fetchertypes.EmptyRawDataChangesRootHash[:]) {
 		// this is a special case for empty raw data changes which is triggered by the staker's deposit, so we need to use version+1
-		if err := f.stakers.GrowVersionsFromCacheByDeposit(version); err != nil {
+		if err := f.stakers.GrowVersionsFromCacheByDepositWithdraw(version, withdrawVersion); err != nil {
 			f.logger.Error("failed to grow versions from cache", "error", err, "next feed-version", version)
 			return err
 		}
@@ -441,13 +441,13 @@ func (f *feeder) applyNSTBalanceUpdate(rootHash []byte, version uint64) error {
 		if err := proto.Unmarshal(rawData, changes); err != nil {
 			return err
 		}
-		if err := f.stakers.ApplyBalanceChanges(changes, version); err != nil {
+		if err := f.stakers.ApplyBalanceChanges(changes, version, withdrawVersion); err != nil {
 			return err
 		}
 		f.logger.Info("successfully applied balance changes", "updated feed-version", version)
 	}
-	sInfos, _ := f.stakers.GetStakerInfos()
-	f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
+	sInfos, _, _ := f.stakers.GetStakerInfos()
+	f.fetcherNST.SetNSTStakers(f.source, sInfos, version, withdrawVersion)
 	return nil
 }
 
@@ -761,14 +761,15 @@ func (f *feeder) start() {
 							req.res <- err
 						} else {
 							f.logger.Info("successfully grow versions from cache on first deposit, then reset stakerlist for fetcher", "feederID", f.feederID)
-							sInfos, version := f.stakers.GetStakerInfos()
-							f.fetcherNST.SetNSTStakers(f.source, sInfos, version)
+							sInfos, version, withdrawVersion := f.stakers.GetStakerInfos()
+							f.fetcherNST.SetNSTStakers(f.source, sInfos, version, withdrawVersion)
 						}
 					}
 					req.res <- nil
 				}
 			case req := <-f.nstBalanceCh:
-				req.res <- f.applyNSTBalanceUpdate(req.info.RootHash(), req.info.Version())
+				version, withdrawVersion := req.info.Versions()
+				req.res <- f.applyNSTBalanceUpdate(req.info.RootHash(), version, withdrawVersion)
 			case req := <-f.nstPieceCh:
 				req.res <- f.updateNSTPieceIndex(req.pieceIndex)
 				if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {

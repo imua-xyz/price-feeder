@@ -56,10 +56,11 @@ type ResultConfig struct {
 	} `json:"data"`
 }
 
-func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version uint64) {
+func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version uint64, withdrawVersion uint64) {
 	s.stakers.Locker.Lock()
 	s.stakers.SInfos = sInfos
 	s.stakers.Version = version
+	s.stakers.WithdrawVersion = withdrawVersion
 	s.stakers.Locker.Unlock()
 }
 
