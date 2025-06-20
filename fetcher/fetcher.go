@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -15,6 +16,8 @@ import (
 const (
 	loggerTag       = "fetcher"
 	loggerTagPrefix = "fetcher_%s"
+
+	snapshotInterval = 30 * time.Second
 )
 
 var (
@@ -30,6 +33,7 @@ type Fetcher struct {
 	sources map[string]types.SourceInf
 	// source->map{token->price}
 	priceReadList   map[string]map[string]*types.PriceSync
+	tokensStatus    atomic.Value
 	addSourceToken  chan *addTokenForSourceReq
 	getLatestPrice  chan *getLatestPriceReq
 	setNSTStakersCh chan *setNSTStakersReq
@@ -54,9 +58,10 @@ type getLatestPriceRes struct {
 }
 
 type setNSTStakersReq struct {
-	sourceName string
-	sInfos     types.StakerInfos
-	version    uint64
+	sourceName      string
+	sInfos          types.StakerInfos
+	version         uint64
+	withdrawVersion uint64
 }
 
 func newGetLatestPriceReq(source, token string) (*getLatestPriceReq, chan *getLatestPriceRes) {
@@ -66,12 +71,11 @@ func newGetLatestPriceReq(source, token string) (*getLatestPriceReq, chan *getLa
 
 func NewFetcher(logger feedertypes.LoggerInf, sources map[string]types.SourceInf) *Fetcher {
 	return &Fetcher{
-		logger:         logger,
-		locker:         new(sync.Mutex),
-		sources:        sources,
-		priceReadList:  make(map[string]map[string]*types.PriceSync),
-		addSourceToken: make(chan *addTokenForSourceReq, 5),
-		// getLatestPrice: make(chan *getLatestPriceReq),
+		logger:          logger,
+		locker:          new(sync.Mutex),
+		sources:         sources,
+		priceReadList:   make(map[string]map[string]*types.PriceSync),
+		addSourceToken:  make(chan *addTokenForSourceReq, 5),
 		getLatestPrice:  make(chan *getLatestPriceReq, 5),
 		setNSTStakersCh: make(chan *setNSTStakersReq, 10),
 		stop:            make(chan struct{}),
@@ -100,8 +104,8 @@ func (f *Fetcher) AddTokenForSourceUnBlocked(source, token string) {
 	}
 }
 
-func (f *Fetcher) SetNSTStakers(sourceName string, sInfos types.StakerInfos, version uint64) {
-	f.setNSTStakersCh <- &setNSTStakersReq{sourceName: sourceName, sInfos: sInfos, version: version}
+func (f *Fetcher) SetNSTStakers(sourceName string, sInfos types.StakerInfos, version uint64, withdrawVersion uint64) {
+	f.setNSTStakersCh <- &setNSTStakersReq{sourceName: sourceName, sInfos: sInfos, version: version, withdrawVersion: withdrawVersion}
 }
 
 // GetLatestPrice return the queried price for the token from specified source
@@ -111,6 +115,13 @@ func (f *Fetcher) GetLatestPrice(source, token string) (types.PriceInfo, error) 
 	f.getLatestPrice <- req
 	result := <-res
 	return result.price, result.err
+}
+
+func (f *Fetcher) GetTokensStatus() map[string]map[string]*types.TokenStatus {
+	if v, ok := f.tokensStatus.Load().(map[string]map[string]*types.TokenStatus); ok {
+		return v
+	}
+	return nil
 }
 
 func (f *Fetcher) Start() error {
@@ -135,8 +146,37 @@ func (f *Fetcher) Start() error {
 
 	go func() {
 		const timeout = 10 * time.Second
+		tic := time.NewTicker(snapshotInterval)
 		for {
 			select {
+			case <-tic.C:
+				cpy := make(map[string]map[string]*types.TokenStatus)
+				update := false
+				for sName, tokens := range f.priceReadList {
+					if !f.sources[sName].PriceUpdate() {
+						continue
+					}
+					for tName, price := range tokens {
+						if price == nil {
+							f.logger.Error("price is nil", "source", sName, "token", tName)
+							continue
+						}
+						p := price.Get()
+						if cpy[sName] == nil {
+							cpy[sName] = make(map[string]*types.TokenStatus)
+						}
+						cpy[sName][tName] = &types.TokenStatus{
+							Name:   tName,
+							Price:  p,
+							Active: true,
+						}
+					}
+					f.sources[sName].ResetPriceUpdate()
+					update = true
+				}
+				if update {
+					f.tokensStatus.Store(cpy)
+				}
 			case req := <-f.addSourceToken:
 				timer := time.NewTimer(timeout)
 				select {
@@ -200,7 +240,7 @@ func (f *Fetcher) Start() error {
 					if !ok {
 						f.logger.Error("failed to set NST stakers for a source which doesn't support NST stakers", "source", req.sourceName)
 					}
-					sNST.SetNSTStakers(req.sInfos, req.version)
+					sNST.SetNSTStakers(req.sInfos, req.version, req.withdrawVersion)
 				}
 			case <-f.stop:
 				f.locker.Lock()
