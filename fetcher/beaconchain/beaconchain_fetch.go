@@ -198,10 +198,6 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			}
 		}
 
-		// capsuleBalanceGwei := new(big.Int).Div(capsuleBalance, big.NewInt(1e9))
-		// stakerBalance += capsuleBalanceGwei.Uint64()
-		// --- End capsule balance integration ---
-
 		validatorBalances, err := getValidators(validators[i:], stateRoot, epoch)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get validators from beaconchain, error:%w", err)
@@ -209,25 +205,6 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		for _, validatorBalance := range validatorBalances {
 			stakerBalance += validatorBalance[1]
 		}
-
-		// Capsule balance integration
-		//		capsuleAddr, err := getCapsuleAddressForStaker(s.ethClient, stakerInfo.Address, blockNumber, s.bootstrapAddress)
-		//		if err != nil {
-		//			return nil, fmt.Errorf("failed to get capsule address, staker_index:%d, staker:%s, err:%w", stakerIdx, stakerInfo.Address, err)
-		//		}
-		//
-		//		if len(capsuleAddr) == 0 || capsuleAddr == zeroAddressHex || s.ethClient == nil {
-		//			return nil, fmt.Errorf("capsule address is empty:%t or ethClient is nil:%t, staker_index:%d, staker:%s", len(capsuleAddr) == 0, s.ethClient == nil, stakerIdx, stakerInfo.Address)
-		//		}
-		//
-		//		capsuleBalance, valid, err := getCapsuleValidBalance(s.ethClient, capsuleAddr, blockNumber)
-		//		if err != nil {
-		//			return nil, fmt.Errorf("failed to get capsule balance, staker_index:%d, capsule:%s, err:%w", stakerIdx, capsuleAddr, err)
-		//		}
-		//
-		//		capsuleBalanceGwei := new(big.Int).Div(capsuleBalance, big.NewInt(1e9))
-		//		stakerBalance += capsuleBalanceGwei.Uint64()
-		// --- End capsule balance integration ---
 
 		if stakerBalance != stakerInfo.Balance {
 			changedStakerBalances = append(changedStakerBalances, &oracletypes.NSTKV{

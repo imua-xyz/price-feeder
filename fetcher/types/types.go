@@ -412,8 +412,6 @@ func (s *Source) startFetchToken(token *tokenInfo) {
 					} else {
 						s.logger.Error("failed to fetch price", "source", s.name, "token", token.name, "error", err)
 						// TODO(leon): exist this routine after maximum fails ?
-						// s.tokens[token.name].active = false
-						// return
 					}
 				} else {
 					// update price
@@ -577,7 +575,7 @@ type Stakers struct {
 	// version -> {stakerAddr, validator, amount}
 	SInfosAdd         map[uint64]*DepositInfo // StakerInfosAdd
 	WithdrawInfos     []*WithdrawInfo         // WithdrawInfos
-	prevWithdrawInfos []*WithdrawInfo
+	prevWithdrawInfos map[uint32]uint64
 }
 
 // GetCopy returns a deep copy of the StakerInfos map.
@@ -809,7 +807,10 @@ func (s *Stakers) GetStakerBalances() map[uint32]uint64 {
 	return ret
 }
 
-func (s *Stakers) CacheDeposits(deposits map[uint64]*DepositInfo, nextVersion uint64) error {
+// func (s *Stakers) CacheDeposits(deposits map[uint64]*DepositInfo, nextVersion uint64) error {
+// CacheDeposits caches deposits for the next version, ensuring the version is continuous and not already existing.
+// NOTE: we don't make sure all-or-nothing, dirty data caused by error should be handled by caller (currently caller will eventually do reset all)
+func (s *Stakers) CacheDepositsWithdraws(deposits map[uint64]*DepositInfo, nextVersion uint64, withdraws []*WithdrawInfo) error {
 	if nextVersion == 0 {
 		return fmt.Errorf("failed to cache deposits, nextVersion is 0")
 	}
@@ -838,6 +839,21 @@ func (s *Stakers) CacheDeposits(deposits map[uint64]*DepositInfo, nextVersion ui
 			Validator:   deposit.Validator,
 			Amount:      deposit.Amount,
 		}
+	}
+	for _, withdraw := range withdraws {
+		if withdraw.WithdrawVersion == 0 {
+			return fmt.Errorf("failed to cache withdraws, withdraw version is 0")
+		}
+		if s.WithdrawVersion >= withdraw.WithdrawVersion {
+			return fmt.Errorf("failed to cache withdraws, withdraw version already exists, current:%d, next:%d", s.WithdrawVersion, withdraw.WithdrawVersion)
+		}
+		if len(s.WithdrawInfos) > 0 && s.WithdrawInfos[len(s.WithdrawInfos)-1].WithdrawVersion+1 != withdraw.WithdrawVersion {
+			return fmt.Errorf("failed to cache withdraws, withdraw version not continuos, current:%d, next:%d", s.WithdrawInfos[len(s.WithdrawInfos)-1].WithdrawVersion, withdraw.WithdrawVersion)
+		}
+		s.WithdrawInfos = append(s.WithdrawInfos, &WithdrawInfo{
+			StakerIndex:     withdraw.StakerIndex,
+			WithdrawVersion: withdraw.WithdrawVersion,
+		})
 	}
 	return nil
 }
@@ -922,7 +938,7 @@ func (s *Stakers) tryGrowVersionsFromCache(version, withdrawVersion uint64, upda
 		if s.WithdrawInfos[len(s.WithdrawInfos)-1].WithdrawVersion < withdrawVersion {
 			return fmt.Errorf("failed to grow version, withdrawInfos is not continuous, current:%d, next:%d", s.WithdrawVersion, withdrawVersion)
 		}
-		s.prevWithdrawInfos = make([]*WithdrawInfo, 0, len(s.WithdrawInfos))
+		s.prevWithdrawInfos = make(map[uint32]uint64)
 		for _, withdraw := range s.WithdrawInfos {
 			if withdraw.WithdrawVersion > withdrawVersion {
 				// we have reached the target withdraw version
@@ -934,10 +950,10 @@ func (s *Stakers) tryGrowVersionsFromCache(version, withdrawVersion uint64, upda
 				return err
 			}
 			latestWithdrawVersion = withdraw.WithdrawVersion
-			s.prevWithdrawInfos = append(s.prevWithdrawInfos, &WithdrawInfo{
-				StakerIndex:     withdraw.StakerIndex,
-				WithdrawVersion: sInfo.WithdrawVersion,
-			})
+			// for same staker index, it could be changed multiple times, we only need to keep the original withdraw version
+			if _, exist := s.prevWithdrawInfos[withdraw.StakerIndex]; !exist {
+				s.prevWithdrawInfos[withdraw.StakerIndex] = sInfo.WithdrawVersion
+			}
 			sInfo.WithdrawVersion = withdraw.WithdrawVersion
 		}
 	}
@@ -955,13 +971,13 @@ func (s *Stakers) GrowVersionsFromCacheByDepositWithdraw(version, withdrawVersio
 	if err := s.tryGrowVersionsFromCache(version, withdrawVersion, true); err != nil {
 		return err
 	}
-	s.removeVersions(version, withdrawVersion)
+	s.complete(version, withdrawVersion)
 	s.Version = version
 	s.WithdrawVersion = withdrawVersion
 	return nil
 }
 
-func (s *Stakers) removeVersions(version, withdrawVersion uint64) {
+func (s *Stakers) complete(version, withdrawVersion uint64) {
 	for v := range s.SInfosAdd {
 		if v <= version {
 			delete(s.SInfosAdd, v)
@@ -974,7 +990,7 @@ func (s *Stakers) removeVersions(version, withdrawVersion uint64) {
 		}
 	}
 	s.WithdrawInfos = s.WithdrawInfos[idx:]
-	s.prevWithdrawInfos = make([]*WithdrawInfo, 0)
+	s.prevWithdrawInfos = make(map[uint32]uint64)
 }
 
 func (s *Stakers) downgradeVersion(version, _ uint64) {
@@ -984,14 +1000,14 @@ func (s *Stakers) downgradeVersion(version, _ uint64) {
 		sInfo.RemoveValidator(deposit.Validator, deposit.Amount)
 		s.Version--
 	}
-	for _, withdraw := range s.prevWithdrawInfos {
-		sInfo, exists := s.SInfos[withdraw.StakerIndex]
+	for sIndex, sVersion := range s.prevWithdrawInfos {
+		sInfo, exists := s.SInfos[sIndex]
 		if !exists {
 			continue
 		}
-		sInfo.WithdrawVersion = withdraw.WithdrawVersion
+		sInfo.WithdrawVersion = sVersion
 	}
-	s.prevWithdrawInfos = make([]*WithdrawInfo, 0)
+	s.prevWithdrawInfos = make(map[uint32]uint64)
 }
 
 // ApplyBalanceChanges applies balance changes from RawDataNST to the staker infos.
@@ -1012,7 +1028,7 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 				s.downgradeVersion(version, withdrawVersion)
 			}
 		} else {
-			s.removeVersions(version, withdrawVersion)
+			s.complete(version, withdrawVersion)
 		}
 	}()
 	// Prepare to track stakers to remove and those to update
@@ -1024,10 +1040,6 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 			err = fmt.Errorf("stakerIndex not found, staker-index:%d", change.StakerIndex)
 			return err
 		}
-		//		if change.Balance == 0 {
-		//			// Mark this staker for removal if their balance is zero
-		//			removed = append(removed, change.StakerIndex)
-		//		} else {
 		// Prepare an updated copy of the staker info with the new balance
 		if sInfo.WithdrawVersion > s.WithdrawVersion {
 			// skip update
@@ -1036,51 +1048,12 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 		tmp := *sInfo // shallow copy is safe since Validators is not changed
 		tmp.Balance = change.Balance
 		updated[uint32(change.StakerIndex)] = &tmp
-		//		}
 	}
 
 	// Apply all balance updates
 	for sIdx, sInfo := range updated {
 		s.SInfos[sIdx] = sInfo
 	}
-
-	// Handle the removed stakers if any
-	//	if len(removed) > 0 {
-	//		// The following logic rotates the staker list to remove the specified indices
-	//		tmp := oraclecommon.NewCaches()
-	//		tmpChainID := uint64(1)
-	//		revertIndex := make(map[string]uint32)
-	//		tmpList := make([]*oracletypes.StakerListEntry, len(s.SInfos))
-	//		for sIdx, sInfo := range s.SInfos {
-	//			revertIndex[sInfo.Address] = sIdx
-	//			tmpList[int(sIdx)] = &oracletypes.StakerListEntry{
-	//				StakerAddr: sInfo.Address,
-	//			}
-	//		}
-	//		// Set the staker list in the cache for rotation
-	//		tmp.SetNSTStakerList(tmpChainID, tmpList)
-	//		// Rotate the staker list to remove the specified stakers
-	//		var updatedAfterRotate map[uint32]string
-	//		updatedAfterRotate, err = tmp.RotateStakerList(tmpChainID, removed)
-	//		if err != nil {
-	//			return err
-	//		}
-	//
-	//		// Update the SInfos map to reflect the rotated staker list
-	//		deleted := make(map[uint32]bool)
-	//		if len(updatedAfterRotate) > 0 {
-	//			for sIdx, address := range updatedAfterRotate {
-	//				s.SInfos[sIdx] = s.SInfos[revertIndex[address]]
-	//				delete(s.SInfos, revertIndex[address])
-	//				deleted[revertIndex[address]] = true
-	//			}
-	//		}
-	//		for _, removedIdx := range removed {
-	//			if _, ok := updatedAfterRotate[removedIdx]; !ok && !deleted[removedIdx] {
-	//				delete(s.SInfos, uint32(removedIdx))
-	//			}
-	//		}
-	//	}
 	// Increment the version after successful application
 	s.Version = version
 	s.WithdrawVersion = withdrawVersion

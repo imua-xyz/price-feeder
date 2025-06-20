@@ -335,7 +335,6 @@ func (s *SubscribeResult) GetFeedVersions() (map[uint64]*FeedVersion, error) {
 	if len(s.Result.Events.NSTFeedVersion) < 1 {
 		return nil, errors.New("failed to get feedVersion from event_newBlock response")
 	}
-	// ret := make(map[uint64]uint64)
 	ret := make(map[uint64]*FeedVersion)
 	for _, feedVersion := range s.Result.Events.NSTFeedVersion {
 		tmp := strings.Split(feedVersion, "_")
@@ -449,8 +448,7 @@ type EventRes struct {
 	FeederIDs    string
 	TxHeight     string
 	NativeETH    string
-	// eventMessage interface{}
-	Type EventType
+	Type         EventType
 }
 
 type SubscribeResult struct {

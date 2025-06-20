@@ -252,7 +252,6 @@ type feeder struct {
 	tokenID  uint64
 	feederID int
 	// TODO: add check for rouleID, v1 can be skipped
-	// ruleID
 	startRoundID   int64
 	startBaseBlock int64
 	interval       int64
@@ -751,12 +750,12 @@ func (f *feeder) start() {
 				// TODO: ? no need to take care of concurrency for these requests of nstStakers change with channel
 			case req := <-f.nstStakersCh:
 				v, _ := req.info.Versions()
-				if err := f.stakers.CacheDeposits(req.info.Deposits(), v); err != nil {
+				if err := f.stakers.CacheDepositsWithdraws(req.info.Deposits(), v, req.info.Withdraws()); err != nil {
 					req.res <- err
 				} else {
 					f.logger.Info("successfully cached deposits", "updated cached-version", v, "feederID", f.feederID)
 					if v == 1 {
-						if err := f.stakers.GrowVersionsFromCacheByDeposit(v); err != nil {
+						if err := f.stakers.GrowVersionsFromCacheByDepositWithdraw(v, 0); err != nil {
 							f.logger.Error("failed to grow versions from cache on first deposit", "error", err, "feederID", f.feederID)
 							req.res <- err
 						} else {

@@ -71,12 +71,11 @@ func newGetLatestPriceReq(source, token string) (*getLatestPriceReq, chan *getLa
 
 func NewFetcher(logger feedertypes.LoggerInf, sources map[string]types.SourceInf) *Fetcher {
 	return &Fetcher{
-		logger:         logger,
-		locker:         new(sync.Mutex),
-		sources:        sources,
-		priceReadList:  make(map[string]map[string]*types.PriceSync),
-		addSourceToken: make(chan *addTokenForSourceReq, 5),
-		// getLatestPrice: make(chan *getLatestPriceReq),
+		logger:          logger,
+		locker:          new(sync.Mutex),
+		sources:         sources,
+		priceReadList:   make(map[string]map[string]*types.PriceSync),
+		addSourceToken:  make(chan *addTokenForSourceReq, 5),
 		getLatestPrice:  make(chan *getLatestPriceReq, 5),
 		setNSTStakersCh: make(chan *setNSTStakersReq, 10),
 		stop:            make(chan struct{}),

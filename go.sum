@@ -810,8 +810,6 @@ github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7
 github.com/envoyproxy/protoc-gen-validate v0.6.7/go.mod h1:dyJXwwfPK2VSqiB9Klm1J6romD608Ba7Hij42vrOBCo=
 github.com/envoyproxy/protoc-gen-validate v0.9.1/go.mod h1:OKNgG7TCp5pF4d6XftA0++PMirau2/yoOwVac3AbF2w=
 github.com/envoyproxy/protoc-gen-validate v0.10.0/go.mod h1:DRjgyB0I43LtJapqN6NiRwroiAU2PaFuvk/vjgh61ss=
-github.com/evmos/cosmos-sdk v0.47.5-evmos.2 h1:fyhM0NYw/FnP4ZBXzQ7k+G4fXhfdU07MONoYrGlOCpc=
-github.com/evmos/cosmos-sdk v0.47.5-evmos.2/go.mod h1:EHwCeN9IXonsjKcjpS12MqeStdZvIdxt3VYXhus3G3c=
 github.com/evmos/go-ethereum v1.10.26-evmos-rc2 h1:tYghk1ZZ8X4/OQ4YI9hvtm8aSN8OSqO0g9vo/sCMdBo=
 github.com/evmos/go-ethereum v1.10.26-evmos-rc2/go.mod h1:/6CsT5Ceen2WPLI/oCA3xMcZ5sWMF/D46SjM/ayY0Oo=
 github.com/fatih/color v1.7.0/go.mod h1:Zm6kSWBoL9eyXnKyktHP6abPY2pDugNf5KwzbycvMj4=
@@ -1147,8 +1145,10 @@ github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:
 github.com/ianlancetaylor/demangle v0.0.0-20220319035150-800ac71e25c2/go.mod h1:aYm2/VgdVmcIU8iMfdMvDMsRAQjcfZSKFby6HOFvi/w=
 github.com/improbable-eng/grpc-web v0.15.0 h1:BN+7z6uNXZ1tQGcNAuaU1YjsLTApzkjt2tzCixLaUPQ=
 github.com/improbable-eng/grpc-web v0.15.0/go.mod h1:1sy9HKV4Jt9aEs9JSnkWlRJPuPtwNr0l57L4f878wP8=
-github.com/imua-xyz/evmos/v16 v16.0.3-0.20240828081344-d5cfcd34a812 h1:9LcKMUeHSmwbSmMiCkSOiPg0+DCR0dPpzgzZWc83HBg=
-github.com/imua-xyz/evmos/v16 v16.0.3-0.20240828081344-d5cfcd34a812/go.mod h1:w0vtRYI4I0/O8eihq6ZuDvlca4ZiYCKN6vpakG9zHcc=
+github.com/imua-xyz/cosmos-sdk v0.47.5-evmos.2.0.20250312095401-0035968c59f0 h1:QXO2a+U35PKMr83XJ0BEbFX33yV8nfAz205KGsvwaPg=
+github.com/imua-xyz/cosmos-sdk v0.47.5-evmos.2.0.20250312095401-0035968c59f0/go.mod h1:EHwCeN9IXonsjKcjpS12MqeStdZvIdxt3VYXhus3G3c=
+github.com/imua-xyz/evmos/v16 v16.0.3-0.20250515032007-e21b41cb9b20 h1:OvRREovoBRCGwSkaGiEzgpOSjLhGeldeWBPWcJH8oWA=
+github.com/imua-xyz/evmos/v16 v16.0.3-0.20250515032007-e21b41cb9b20/go.mod h1:aPzVlrI2p5Jb0tETC15f4CVRYwzChGy+Wp6SebGc6tE=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
@@ -1217,8 +1217,8 @@ github.com/ledgerwatch/erigon-lib v0.0.0-20230210071639-db0e7ed11263 h1:LGEzZvf3
 github.com/ledgerwatch/erigon-lib v0.0.0-20230210071639-db0e7ed11263/go.mod h1:OXgMDuUo2lZ3NpH29ZvMYbk+LxFd5ffDl2Z2mGMuY/I=
 github.com/leodido/go-urn v1.2.4 h1:XlAE/cm/ms7TE/VMVoduSpNBoyc2dOxHs5MZSwAN63Q=
 github.com/leodido/go-urn v1.2.4/go.mod h1:7ZrI8mTSeBSHl/UaRyKQW1qZeMgak41ANeCNaVckg+4=
-github.com/leonz789/exocore v0.0.0-20250522065346-bf51cd9e1513 h1:Y2v4refUaNf73AVG8xTvmWg6WQ+oDxWRC/8SpH/WiI4=
-github.com/leonz789/exocore v0.0.0-20250522065346-bf51cd9e1513/go.mod h1:zVbAXM39rPqbFIPTTUUORGV2t3zZrh1ja+DaWAjgIh8=
+github.com/leonz789/exocore v0.0.0-20250620011441-786eba0d1487 h1:QkwG+L6HwzADlUBWDfix+IOYk+uj5OrDOTIbLXgEcEI=
+github.com/leonz789/exocore v0.0.0-20250620011441-786eba0d1487/go.mod h1:bgJ/7tLeJqjD6SIIkvWYVrNXiO5NKMFebMmKp0mqsmw=
 github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
 github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/libp2p/go-buffer-pool v0.1.0 h1:oK4mSFcQz7cTQIfqbe4MIj9gLW+mnanjyFtc6cdF0Y8=

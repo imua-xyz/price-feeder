@@ -91,7 +91,6 @@ func (ec imuaClient) signMsg(msgs ...sdk.Msg) (authsigning.Tx, error) {
 		ec.logger.Error("failed to sign txBytes", "error", err)
 		return nil, err
 	}
-	// _ = txBuilder.SetSignatures(getSignature(sigBytes, ec.pubKey, signMode))
 	_ = txBuilder.SetSignatures(ec.getSignature(sigBytes))
 	return txBuilder.GetTx(), nil
 }
@@ -195,8 +194,7 @@ func (ec imuaClient) getSignedTxBytes2Phases(feederID, baseBlock uint64, prices 
 	}
 	for _, price := range prices {
 		pss[0].Prices = append(pss[0].Prices, &oracletypes.PriceTimeDetID{
-			Price: price.Price,
-			//			Decimal:   price.Decimal,
+			Price:     price.Price,
 			Timestamp: time.Now().UTC().Format(feedertypes.TimeLayout),
 			DetID:     price.RoundID,
 		})

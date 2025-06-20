@@ -259,18 +259,23 @@ replace (
 	// use cosmos fork of keyring
 	github.com/99designs/keyring => github.com/cosmos/keyring v1.2.0
 
-	// use Cosmos-SDK fork to enable Ledger functionality
-	github.com/cosmos/cosmos-sdk => github.com/evmos/cosmos-sdk v0.47.5-evmos.2
+	// use Cosmos-SDK fork
+	// (1) to enable Ledger functionality
+	// (2) to backport `Copy` feature to state for reverting precompiles
+	// TODO cut a release (after adding security backports) instead of pointing to a commit hash
+	github.com/cosmos/cosmos-sdk => github.com/imua-xyz/cosmos-sdk v0.47.5-evmos.2.0.20250312095401-0035968c59f0
+
 	//fix cosmos-sdk error
 	github.com/cosmos/gogoproto => github.com/cosmos/gogoproto v1.4.10
 	// use Evmos geth fork
 	github.com/ethereum/go-ethereum => github.com/evmos/go-ethereum v1.10.26-evmos-rc2
-	// use imua fork of evmos
-	github.com/evmos/evmos/v16 => github.com/imua-xyz/evmos/v16 v16.0.3-0.20240828081344-d5cfcd34a812
+
+	// use imua fork of evmos which contains evm and precompile fixes
+	github.com/evmos/evmos/v16 => github.com/imua-xyz/evmos/v16 v16.0.3-0.20250515032007-e21b41cb9b20
 	// Security Advisory https://github.com/advisories/GHSA-h395-qcrw-5vmq
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.9.1
 
-	github.com/imua-xyz/imuachain => github.com/leonz789/exocore v0.0.0-20250522065346-bf51cd9e1513
+	github.com/imua-xyz/imuachain => github.com/leonz789/exocore v0.0.0-20250620011441-786eba0d1487
 	// replace broken goleveldb
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	//fix cosmos-sdk error
