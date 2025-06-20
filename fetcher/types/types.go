@@ -811,7 +811,7 @@ func (s *Stakers) GetStakerBalances() map[uint32]uint64 {
 // CacheDeposits caches deposits for the next version, ensuring the version is continuous and not already existing.
 // NOTE: we don't make sure all-or-nothing, dirty data caused by error should be handled by caller (currently caller will eventually do reset all)
 func (s *Stakers) CacheDepositsWithdraws(deposits map[uint64]*DepositInfo, nextVersion uint64, withdraws []*WithdrawInfo) error {
-	if nextVersion == 0 {
+	if len(deposits) > 0 && nextVersion == 0 {
 		return fmt.Errorf("failed to cache deposits, nextVersion is 0")
 	}
 	if len(s.SInfosAdd) > 0 && (s.SInfosAdd[nextVersion-1] == nil || s.SInfosAdd[nextVersion] != nil) {

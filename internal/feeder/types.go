@@ -94,8 +94,17 @@ type localPrice struct {
 	height int64
 }
 
+func (lp *localPrice) reset() {
+	lp.price = fetchertypes.PriceInfo{}
+	lp.height = 0
+}
+
 // updatePrice will transafer the decimal for LST
 func (lp *localPrice) updatePrice(p *updatePrice, twoPhases bool) (string, error) {
+	if p.price == nil || p.price.Price == "" {
+		lp.reset()
+		return "", nil
+	}
 	// TODO: convert decimal
 	updatedPrice := *(p.price)
 	if twoPhases {
@@ -727,8 +736,12 @@ func (f *feeder) start() {
 			case price := <-f.priceCh:
 				if f.IsTwoPhases() {
 					rootHash, err := f.lastPrice.updatePrice(price, true)
-					if err != nil {
-						f.logger.Error("failed to update local price", "error", err)
+					if err != nil || len(rootHash) == 0 {
+						if err != nil {
+							f.logger.Error("failed to update local price", "error", err)
+						} else {
+							f.logger.Info("reset local price to empty", "roundID", f.roundID, "price", price.price)
+						}
 						continue
 					}
 					f.logger.Info("finalize rootHash", "root", rootHash)

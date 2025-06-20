@@ -132,6 +132,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	}
 
 	// --- CL/EL synchronization ---
+
 	elBlockNumber, clSlot, stateRoot, err := getFinalizedELBlockNumber()
 	if err != nil {
 		return nil, fmt.Errorf("fail to get finalized EL block number, error:%w", err)
@@ -141,7 +142,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	epoch := clSlot / slotsPerEpoch
 	// --- End CL/EL synchronization ---
 	// epoch not updated, just return without fetching since effective-balance has not changed
-	if epoch <= finalizedEpoch && version <= finalizedVersion {
+	if epoch <= finalizedEpoch && version <= finalizedVersion && withdrawVersion <= finalizedWithdrawVersion {
 		s.logger.Info("fetch efb from beaconchain, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)
 		return &types.PriceInfo{
 			Price: string(latestChangesBytes),
@@ -237,6 +238,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	}
 	finalizedEpoch = epoch
 	finalizedVersion = version
+	finalizedWithdrawVersion = withdrawVersion
 
 	return &types.PriceInfo{
 		Price:   string(latestChangesBytes),

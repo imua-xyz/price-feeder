@@ -13,6 +13,7 @@ import (
 )
 
 type ResultValidators struct {
+	Code int `json:"code"`
 	Data []struct {
 		Index     string `json:"index"`
 		Validator struct {
@@ -62,8 +63,9 @@ var (
 	//	defaultStakers          = newStakers()
 
 	// latest finalized epoch we've got balances summarized for stakers
-	finalizedEpoch   uint64
-	finalizedVersion uint64
+	finalizedEpoch           uint64
+	finalizedVersion         uint64
+	finalizedWithdrawVersion uint64
 
 	latestChangesBytes = types.NSTZeroChanges
 
@@ -96,6 +98,10 @@ func getValidators(validators []string, stateRoot string, epoch uint64) ([][]uin
 	if err := json.Unmarshal(result, &re); err != nil {
 		logger.Error("failed to parse GetValidators response", "error", err)
 		return nil, err
+	}
+	if re.Code != 0 {
+		logger.Error("GetValidators response code is not 0", "code", re.Code, "response", string(result))
+		return nil, fmt.Errorf("GetValidators response code is not 0: %d", re.Code)
 	}
 	ret := make([][]uint64, 0, len(re.Data))
 	for _, value := range re.Data {

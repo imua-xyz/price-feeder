@@ -215,6 +215,8 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 		if len(sInfos) > 0 {
 			feeder.fetcherNST.SetNSTStakers(feeder.source, sInfos, feedVersion, withdrawVersion)
 		}
+		// reset lastprice
+		feeder.updatePrice(0, nil)
 		return nil
 	}
 	return fmt.Errorf("failed to ResetAllStakerValidators after maxRetry:%d, feederID:%d, assetID:%s", DefaultRetryConfig.Attempts, feeder.feederID, assetID)
