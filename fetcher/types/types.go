@@ -583,9 +583,10 @@ func (sis StakerInfos) GetCopy() StakerInfos {
 	ret := make(StakerInfos)
 	for idx, si := range sis {
 		ret[idx] = &StakerInfo{
-			Address:    si.Address,
-			Validators: si.Validators,
-			Balance:    si.Balance,
+			Address:         si.Address,
+			Validators:      si.Validators,
+			Balance:         si.Balance,
+			WithdrawVersion: si.WithdrawVersion,
 		}
 	}
 	return ret
@@ -817,7 +818,7 @@ func (s *Stakers) CacheDepositsWithdraws(deposits map[uint64]*DepositInfo, nextV
 	if len(s.SInfosAdd) > 0 && (s.SInfosAdd[nextVersion-1] == nil || s.SInfosAdd[nextVersion] != nil) {
 		return fmt.Errorf("failed to cache deposits, version not continuos or already exists, nextVersion:%d, no nextVersion-1:%t", nextVersion, s.SInfosAdd[nextVersion-1] == nil)
 	}
-	if len(s.SInfosAdd) == 0 && s.Version+1 != nextVersion {
+	if len(s.SInfosAdd) > 0 && s.Version+1 != nextVersion {
 		return fmt.Errorf("failed to cache deposits, version mismatch, current:%d, next:%d", s.Version, nextVersion)
 	}
 
@@ -1024,7 +1025,7 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 	}
 	defer func() {
 		if err != nil {
-			if version > 1 {
+			if version > 1 || withdrawVersion > s.WithdrawVersion {
 				s.downgradeVersion(version, withdrawVersion)
 			}
 		} else {
@@ -1032,7 +1033,6 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 		}
 	}()
 	// Prepare to track stakers to remove and those to update
-	//	removed := make([]uint32, 0)
 	updated := make(map[uint32]*StakerInfo)
 	for _, change := range changes.NstBalanceChanges {
 		sInfo, exists := s.SInfos[uint32(change.StakerIndex)]
@@ -1040,11 +1040,12 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 			err = fmt.Errorf("stakerIndex not found, staker-index:%d", change.StakerIndex)
 			return err
 		}
-		// Prepare an updated copy of the staker info with the new balance
+		// staker info has been grown to the latest withdraw version, so we can campare here to decide whether to update
 		if sInfo.WithdrawVersion > s.WithdrawVersion {
 			// skip update
 			continue
 		}
+		// Prepare an updated copy of the staker info with the new balance
 		tmp := *sInfo // shallow copy is safe since Validators is not changed
 		tmp.Balance = change.Balance
 		updated[uint32(change.StakerIndex)] = &tmp
@@ -1077,7 +1078,7 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version *oracletypes.N
 		}
 		seenStakerIdx[uint64(sInfo.StakerIndex)] = struct{}{}
 
-		// we don't limit the staker size here, it's guaranteed by imuachain, and the size might not be equal to the biggest index
+		// we don't limit the staker size here, it's guaranteed by imuachain
 		validators := make([]string, 0, len(sInfo.ValidatorList))
 		seenValidatorIdx := make(map[string]struct{})
 		pendingDepositAmount := uint64(0)
@@ -1107,13 +1108,16 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version *oracletypes.N
 			return fmt.Errorf("balance is less than pending deposit amount, staker-index:%d, balance:%d, pending-deposit-amount:%d", sInfo.StakerIndex, balance, pendingDepositAmount)
 		}
 		if len(validators) > 0 {
+			// so we actully might include withdrawVersion > feedWithdrawVersion as 'current snapshot' info, but it's fine for withdraw
 			tmp[uint32(sInfo.StakerIndex)] = &StakerInfo{
 				Address:         sInfo.StakerAddr,
 				Validators:      validators,
 				Balance:         balance - pendingDepositAmount,
 				WithdrawVersion: sInfo.WithdrawVersion,
 			}
-		} else {
+		}
+		// we might duplicated withdrawVersion, but it's fine to apply again with the same withdrawVersion when we do growVersion later
+		if sInfo.WithdrawVersion > version.FeedWithdrawVersion {
 			withdraws = append(withdraws, &WithdrawInfo{
 				StakerIndex:     sInfo.StakerIndex,
 				WithdrawVersion: sInfo.WithdrawVersion,

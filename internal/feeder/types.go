@@ -101,7 +101,7 @@ func (lp *localPrice) reset() {
 
 // updatePrice will transafer the decimal for LST
 func (lp *localPrice) updatePrice(p *updatePrice, twoPhases bool) (string, error) {
-	if p.price == nil || p.price.Price == "" {
+	if p == nil || p.price == nil || p.price.Price == "" {
 		lp.reset()
 		return "", nil
 	}
@@ -438,7 +438,7 @@ func (f *feeder) applyNSTBalanceUpdate(rootHash []byte, version uint64, withdraw
 			f.logger.Error("failed to grow versions from cache", "error", err, "next feed-version", version)
 			return err
 		}
-		f.logger.Info("successfully grow versions from cache", "updated feed-version", version)
+		f.logger.Info("successfully grow versions from cache", "updated feed-version", version, "updated withdraw-version", withdrawVersion)
 	} else {
 		rawData := f.twoPhasesInfo.finalizedRawDataByRootHash(rootHash)
 		if rawData == nil {
@@ -679,10 +679,22 @@ func (f *feeder) start() {
 
 						if f.IsTwoPhases() {
 							_, rootHash := f.AddRawData(roundID, []byte(price.Price), f.twoPhasesPieceSize)
-							if bytes.Equal(rootHash, []byte(f.lastPrice.price.Price)) {
-								f.logger.Info("didn't submit price for 1st-phase of 2phases due to price not changed", "roundID", roundID, "delta", delta, "price", price)
-								f.logger.Debug("got latestprice(rootHash) equal to local cache", "feeder", f.Info())
-								continue
+							if len(f.lastPrice.price.Price) > 0 {
+								withdrawVersion, err := strconv.ParseUint(strings.Split(price.RoundID, "|")[2], 10, 64)
+								if err != nil {
+									f.logger.Error("failed to parse withdrawVersion from price.RoundID", "roundID", roundID, "delta", delta, "price", price, "error", err)
+									continue
+								}
+								withdrawVersionLatest, err := strconv.ParseUint(strings.Split(f.lastPrice.price.RoundID, "|")[3], 10, 64)
+								if err != nil {
+									f.logger.Error("failed to parse withdrawVersionLatest from lastPrice.RoundID", "roundID", roundID, "delta", delta, "price", price, "error", err)
+									continue
+								}
+								if bytes.Equal(rootHash, []byte(f.lastPrice.price.Price)) && withdrawVersion <= withdrawVersionLatest {
+									f.logger.Info("didn't submit price for 1st-phase of 2phases due to price not changed", "roundID", roundID, "delta", delta, "price", price)
+									f.logger.Debug("got latestprice(rootHash) equal to local cache", "feeder", f.Info())
+									continue
+								}
 							}
 						} else {
 							// convert the decimal of LST to match definition in oracle module config
@@ -766,15 +778,24 @@ func (f *feeder) start() {
 				if err := f.stakers.CacheDepositsWithdraws(req.info.Deposits(), v, req.info.Withdraws()); err != nil {
 					req.res <- err
 				} else {
-					f.logger.Info("successfully cached deposits", "updated cached-version", v, "feederID", f.feederID)
-					if v == 1 {
-						if err := f.stakers.GrowVersionsFromCacheByDepositWithdraw(v, 0); err != nil {
-							f.logger.Error("failed to grow versions from cache on first deposit", "error", err, "feederID", f.feederID)
-							req.res <- err
+					if len(req.info.Deposits()) > 0 {
+						f.logger.Info("successfully cached deposits", "updated cached-version", v, "feederID", f.feederID)
+						if v == 1 {
+							if err := f.stakers.GrowVersionsFromCacheByDepositWithdraw(v, 0); err != nil {
+								f.logger.Error("failed to grow versions from cache on first deposit", "error", err, "feederID", f.feederID)
+								req.res <- err
+							} else {
+								f.logger.Info("successfully grow versions from cache on first deposit, then reset stakerlist for fetcher", "feederID", f.feederID)
+								sInfos, version, withdrawVersion := f.stakers.GetStakerInfos()
+								f.fetcherNST.SetNSTStakers(f.source, sInfos, version, withdrawVersion)
+							}
+						}
+					}
+					if len(req.info.Withdraws()) > 0 {
+						if _, err := f.lastPrice.updatePrice(nil, true); err != nil {
+							f.logger.Error("failed to reset local price to empty after withdraws", "error", err, "feederID", f.feederID)
 						} else {
-							f.logger.Info("successfully grow versions from cache on first deposit, then reset stakerlist for fetcher", "feederID", f.feederID)
-							sInfos, version, withdrawVersion := f.stakers.GetStakerInfos()
-							f.fetcherNST.SetNSTStakers(f.source, sInfos, version, withdrawVersion)
+							f.logger.Info("successfully cached withdraws, and reset local price to empty", "feederID", f.feederID, "withdraws", req.info.Withdraws(), "roundID", f.roundID)
 						}
 					}
 					req.res <- nil
@@ -1075,7 +1096,7 @@ func (fs *Feeders) Start() {
 							err:      err,
 						})
 					} else {
-						fs.logger.Info("successfully updated NST balance", "feederID", feederID, "balanceInfo", balanceInfo)
+						fs.logger.Info("successfully updated NST balance", "feederID", feederID)
 					}
 				}
 				req.res <- res

@@ -130,9 +130,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		// return zero price when there's no stakers
 		return &types.PriceInfo{}, nil
 	}
-
 	// --- CL/EL synchronization ---
-
 	elBlockNumber, clSlot, stateRoot, err := getFinalizedELBlockNumber()
 	if err != nil {
 		return nil, fmt.Errorf("fail to get finalized EL block number, error:%w", err)
@@ -143,7 +141,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	// --- End CL/EL synchronization ---
 	// epoch not updated, just return without fetching since effective-balance has not changed
 	if epoch <= finalizedEpoch && version <= finalizedVersion && withdrawVersion <= finalizedWithdrawVersion {
-		s.logger.Info("fetch efb from beaconchain, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)
+		s.logger.Info("fetch efb from beaconchain, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version, "withdrawVersion", withdrawVersion)
 		return &types.PriceInfo{
 			Price: string(latestChangesBytes),
 			// combine epoch and version as roundID in priceInfo
@@ -161,7 +159,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			continue
 		}
 		stakerBalance := uint64(0)
-		// Capsule balance integration
+		// --- Capsule balance integration ---
 		capsuleAddr, err := getCapsuleAddressForStaker(s.ethClient, stakerInfo.Address, blockNumber, s.bootstrapAddress)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get capsule address, staker_index:%d, staker:%s, err:%w", stakerIdx, stakerInfo.Address, err)
@@ -207,7 +205,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			stakerBalance += validatorBalance[1]
 		}
 
-		if stakerBalance != stakerInfo.Balance {
+		if stakerBalance != stakerInfo.Balance || stakerInfo.WithdrawVersion > finalizedWithdrawVersion {
 			changedStakerBalances = append(changedStakerBalances, &oracletypes.NSTKV{
 				StakerIndex: uint32(stakerIdx),
 				Balance:     stakerBalance,
@@ -216,6 +214,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			hasEFBChanged = true
 		}
 	}
+	// when balance change or withdrawVersion is updated(since last feed might skip some balance change), we update the same price again
 	if hasEFBChanged {
 		s.logger.Info("fetched efb from beaconchain, some efbs of validators have changed")
 		sort.Slice(changedStakerBalances, func(i, j int) bool {
@@ -242,6 +241,6 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 
 	return &types.PriceInfo{
 		Price:   string(latestChangesBytes),
-		RoundID: fmt.Sprintf("%s_%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10)),
+		RoundID: fmt.Sprintf("%s|%s|%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10), strconv.FormatUint(withdrawVersion, 10)),
 	}, nil
 }
