@@ -2,8 +2,10 @@ package status
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
+	"strings"
 
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	types "github.com/imua-xyz/price-feeder/internal/status/types"
@@ -12,6 +14,8 @@ import (
 
 	grpcstatus "google.golang.org/grpc/status"
 )
+
+const nstPrefix = "nst"
 
 type fetcherInf interface {
 	GetTokensStatus() map[string]map[string]*fetchertypes.TokenStatus
@@ -44,6 +48,9 @@ func (s *StatusServer) GetAllTokens(ctx context.Context, _ *types.Empty) (*types
 	tokensRes := make([]*types.TokenInfo, 0, len(status))
 	for sName, tokens := range status {
 		for tName, token := range tokens {
+			if strings.HasPrefix(tName, nstPrefix) {
+				token.Price.Price = base64.StdEncoding.EncodeToString([]byte(token.Price.Price))
+			}
 			tokensRes = append(tokensRes, &types.TokenInfo{
 				Source:    sName,
 				Token:     tName,
