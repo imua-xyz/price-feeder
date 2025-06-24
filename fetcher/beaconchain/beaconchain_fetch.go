@@ -166,7 +166,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		}
 
 		if len(capsuleAddr) == 0 || capsuleAddr == zeroAddressHex || s.ethClient == nil {
-			return nil, fmt.Errorf("capsule address is empty:%t or ethClient is nil:%t, staker_index:%d, staker:%s", len(capsuleAddr) == 0, s.ethClient == nil, stakerIdx, stakerInfo.Address)
+			return nil, fmt.Errorf("capsule address is empty:%t or ethClient is nil:%t, staker_index:%d, staker:%s", (len(capsuleAddr) == 0 || capsuleAddr == zeroAddressHex), s.ethClient == nil, stakerIdx, stakerInfo.Address)
 		}
 
 		capsuleBalance, valid, err := getCapsuleValidBalance(s.ethClient, capsuleAddr, blockNumber)
