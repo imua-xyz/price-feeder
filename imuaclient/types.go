@@ -608,7 +608,6 @@ var (
 )
 
 // Init intialize the imuaclient with configuration including consensuskey info, chainID
-// func Init(conf feedertypes.Config, mnemonic, privFile string, standalone bool) (*grpc.ClientConn, func(), error) {
 func Init(conf *feedertypes.Config, mnemonic, privFile string, txOnly bool, standalone bool) error {
 	if logger = feedertypes.GetLogger("imuaclient"); logger == nil {
 		panic("logger is not initialized")

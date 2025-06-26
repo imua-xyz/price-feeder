@@ -32,18 +32,16 @@ var (
 )
 
 func (s *source) fetch(token string) (*types.PriceInfo, error) {
-	// check epoch, when epoch updated, update effective-balance
 	if types.NSTToken(token) != types.NativeTokenETH {
 		return nil, feedertypes.ErrTokenNotSupported.Wrap(fmt.Sprintf("only support native-eth-restaking %s, got:%s", types.NativeTokenETH, token))
 	}
 
-	// stakerValidators, version := defaultStakerValidators.getStakerValidators()
-	stakerValidators, version := s.stakers.GetStakersNoCopy()
+	stakerValidators, version, withdrawVersion := s.stakers.GetStakersNoCopy()
 	if len(stakerValidators) == 0 {
 		// return zero price when there's no stakers
 		return &types.PriceInfo{}, nil
 	}
-	if version <= finalizedVersion {
+	if version <= finalizedVersion && withdrawVersion <= finalizedWithdrawVersion {
 		return &types.PriceInfo{
 			Price: lastNSTPrice,
 			// combine epoch and version as roundID in priceInfo
@@ -74,17 +72,18 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	nstBC := oracletypes.RawDataNST{
 		Version:           version,
 		NstBalanceChanges: changes,
+		WithdrawVersion:   withdrawVersion,
 	}
 	bz, err := proto.Marshal(&nstBC)
 	if err != nil {
 		return &types.PriceInfo{
 			Price: lastNSTPrice,
 			// combine epoch and version as roundID in priceInfo
-			RoundID: fmt.Sprintf("%s_%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10)),
+			RoundID: fmt.Sprintf("%s|%s|%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10), strconv.FormatUint(withdrawVersion, 10)),
 		}, nil
 	}
 	return &types.PriceInfo{
 		Price:   string(bz),
-		RoundID: fmt.Sprintf("%s_%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10)),
+		RoundID: fmt.Sprintf("%s|%s|%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10), strconv.FormatUint(withdrawVersion, 10)),
 	}, nil
 }

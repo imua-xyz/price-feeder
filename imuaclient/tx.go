@@ -24,8 +24,12 @@ func (ec imuaClient) SendTx(feederID, baseBlock uint64, price fetchertypes.Price
 	if err != nil {
 		return nil, err
 	}
+	tc, err := ec.GetTxClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tx client, msg:%v, valConsAddr:%s, error:%w", msg, sdk.ConsAddress(ec.pubKey.Address()), err)
+	}
 	// broadcast txBytes
-	res, err := ec.txClient.BroadcastTx(
+	res, err := tc.BroadcastTx(
 		context.Background(),
 		&sdktx.BroadcastTxRequest{
 			Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC,
@@ -43,7 +47,11 @@ func (ec imuaClient) SendTx2Phases(feederID, baseBlock uint64, prices []*fetcher
 	if err != nil {
 		return nil, err
 	}
-	res, err := ec.txClient.BroadcastTx(
+	tc, err := ec.GetTxClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tx client, msg:%v, valConsAddr:%s, error:%w", msg, sdk.ConsAddress(ec.pubKey.Address()), err)
+	}
+	res, err := tc.BroadcastTx(
 		context.Background(),
 		&sdktx.BroadcastTxRequest{
 			Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC,

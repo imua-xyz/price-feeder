@@ -222,7 +222,7 @@ func (ec imuaClient) startPingRoutine() bool {
 		defer func() {
 			ec.decreaseWsRountines()
 		}()
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(1 * time.Minute)
 		defer func() {
 			ticker.Stop()
 		}()

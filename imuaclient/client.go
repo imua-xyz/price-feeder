@@ -15,19 +15,17 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/types/tx"
-	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/gorilla/websocket"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
-	"google.golang.org/grpc"
 )
 
 var _ ImuaClientInf = &imuaClient{}
 
 // imuaClient implements imuaClientInf interface to serve as a grpc client to interact with eoxored grpc service
 type imuaClient struct {
-	logger   feedertypes.LoggerInf
-	grpcConn *grpc.ClientConn
+	logger      feedertypes.LoggerInf
+	grpcManager *connManager
 
 	// params for sign/send transactions
 	privKey cryptotypes.PrivKey
@@ -36,8 +34,6 @@ type imuaClient struct {
 	txCfg   client.TxConfig
 	chainID string
 
-	// client to broadcast transactions to eoxocred
-	txClient      tx.ServiceClient
 	txClientDebug *rpchttp.HTTP
 
 	// wsclient interact with imuad
@@ -45,16 +41,11 @@ type imuaClient struct {
 	wsEndpoint string
 	wsDialer   *websocket.Dialer
 	// wsStop channel used to signal ws close
-	wsStop chan struct{}
-	//	wsStopRet chan struct{}
-	//	wsActiveRoutines *atomic.Int32
+	wsStop           chan struct{}
 	wsLock           *sync.Mutex
 	wsActiveRoutines *int
 	wsActive         *bool
-	// wsEventsCh       chan EventRes
-	wsEventsCh chan EventInf
-	// client to query from imuad
-	oracleClient oracletypes.QueryClient
+	wsEventsCh       chan EventInf
 }
 
 // NewImuaClient creates a imua-client used to do queries and send transactions to imuad
@@ -87,15 +78,16 @@ func NewImuaClient(logger feedertypes.LoggerInf, endpoint, wsEndpoint, endpointD
 	// grpc connection, websocket is not needed for txOnly mode when do debug
 	if !txOnly {
 		ec.logger.Info("establish grpc connection")
-		ec.grpcConn, err = createGrpcConn(endpoint, encCfg)
+		ec.grpcManager, err = initGRPCManager(endpoint, encCfg, logger)
 		if err != nil {
-			return nil, feedertypes.ErrInitConnectionFail.Wrap(fmt.Sprintf("failed to create new Imuaclient, endpoint:%s, error:%v", endpoint, err))
+			return nil, feedertypes.ErrInitConnectionFail.Wrap(fmt.Sprintf("failed to init grpc conenction manager endpoint:%s, error:%v", endpoint, err))
 		}
-
-		// setup txClient
-		ec.txClient = sdktx.NewServiceClient(ec.grpcConn)
-		// setup queryClient
-		ec.oracleClient = oracletypes.NewQueryClient(ec.grpcConn)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, err = ec.grpcManager.get(ctx)
+		if err != nil {
+			return nil, feedertypes.ErrInitConnectionFail.Wrap(fmt.Sprintf("failed to get grpc connection, endpoint:%s, error:%v", endpoint, err))
+		}
 		// setup wsClient
 		u, err := url.Parse(wsEndpoint)
 		if err != nil {
@@ -117,12 +109,14 @@ func NewImuaClient(logger feedertypes.LoggerInf, endpoint, wsEndpoint, endpointD
 
 func (ec *imuaClient) Close() {
 	ec.CloseWs()
-	ec.CloseGRPC()
+	if err := ec.CloseGRPC(); err != nil {
+		ec.logger.Error("error when close GRPC connection", "error", err)
+	}
 }
 
 // Close close grpc connection
-func (ec *imuaClient) CloseGRPC() {
-	ec.grpcConn.Close()
+func (ec *imuaClient) CloseGRPC() error {
+	return ec.grpcManager.closeConn()
 }
 
 func (ec *imuaClient) CloseWs() {
@@ -131,6 +125,22 @@ func (ec *imuaClient) CloseWs() {
 	}
 	ec.StopWsRoutines()
 	ec.wsClient.Close()
+}
+
+func (ec *imuaClient) GetOracleClient() (oracletypes.QueryClient, error) {
+	grpcConn, err := ec.grpcManager.get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get grpc connection: %w", err)
+	}
+	return oracletypes.NewQueryClient(grpcConn), nil
+}
+
+func (ec *imuaClient) GetTxClient() (tx.ServiceClient, error) {
+	grpcConn, err := ec.grpcManager.get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get grpc connection: %w", err)
+	}
+	return tx.NewServiceClient(grpcConn), nil
 }
 
 // GetClient returns defaultImuaClient and a bool value to tell if that defaultImuaClient has been initialized

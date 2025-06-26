@@ -10,7 +10,11 @@ import (
 
 // GetParams queries oracle params
 func (ec imuaClient) GetParams() (*oracleTypes.Params, error) {
-	paramsRes, err := ec.oracleClient.Params(context.Background(), &oracleTypes.QueryParamsRequest{})
+	oc, err := ec.GetOracleClient()
+	if err != nil {
+		return &oracleTypes.Params{}, fmt.Errorf("failed to get oracleClient, error:%w", err)
+	}
+	paramsRes, err := oc.Params(context.Background(), &oracleTypes.QueryParamsRequest{})
 	if err != nil {
 		return &oracleTypes.Params{}, fmt.Errorf("failed to query oracle params from oracleClient, error:%w", err)
 	}
@@ -20,7 +24,11 @@ func (ec imuaClient) GetParams() (*oracleTypes.Params, error) {
 
 // GetLatestPrice returns latest price of specific token
 func (ec imuaClient) GetLatestPrice(tokenID uint64) (oracleTypes.PriceTimeRound, error) {
-	priceRes, err := ec.oracleClient.LatestPrice(context.Background(), &oracleTypes.QueryGetLatestPriceRequest{TokenId: tokenID})
+	oc, err := ec.GetOracleClient()
+	if err != nil {
+		return oracleTypes.PriceTimeRound{}, fmt.Errorf("failed to get oracleClient, error:%w", err)
+	}
+	priceRes, err := oc.LatestPrice(context.Background(), &oracleTypes.QueryGetLatestPriceRequest{TokenId: tokenID})
 	if err != nil {
 		return oracleTypes.PriceTimeRound{}, fmt.Errorf("failed to get latest price from oracleClient, error:%w", err)
 	}
@@ -39,8 +47,12 @@ func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, 
 	}
 	var ret []*oracleTypes.StakerInfo
 	var version *oracleTypes.NSTVersion
+	oc, err := ec.GetOracleClient()
+	if err != nil {
+		return []*oracleTypes.StakerInfo{}, nil, fmt.Errorf("failed to get oracleClient, error:%w", err)
+	}
 	for reqPage.Key != nil {
-		stakerInfoRes, err := ec.oracleClient.StakerInfos(context.Background(), &oracleTypes.QueryStakerInfosRequest{AssetId: assetID, Pagination: reqPage})
+		stakerInfoRes, err := oc.StakerInfos(context.Background(), &oracleTypes.QueryStakerInfosRequest{AssetId: assetID, Pagination: reqPage})
 		if err != nil {
 			return []*oracleTypes.StakerInfo{}, nil, fmt.Errorf("failed to get stakerInfos from oracleClient, error:%w", err)
 		}
