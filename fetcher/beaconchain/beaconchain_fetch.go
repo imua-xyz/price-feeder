@@ -35,7 +35,7 @@ func getCapsuleValidBalance(ethClient *ethclient.Client, capsuleAddr string, blo
 		return nil, valid, err
 	}
 
-	callData, err := parsedABI.Pack("inWithdrawProgress")
+	callData, err := parsedABI.Pack("isInClaimProgress")
 	if err != nil {
 		return nil, valid, err
 	}
@@ -50,7 +50,7 @@ func getCapsuleValidBalance(ethClient *ethclient.Client, capsuleAddr string, blo
 	}
 
 	var inWithdrawProgress bool
-	err = parsedABI.UnpackIntoInterface(&inWithdrawProgress, "inWithdrawProgress", output)
+	err = parsedABI.UnpackIntoInterface(&inWithdrawProgress, "isInClaimProgress", output)
 	if err != nil || inWithdrawProgress {
 		return nil, valid, err
 	}
