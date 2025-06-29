@@ -32,8 +32,9 @@ var (
 	errExceedsMaxSlot = errors.New("slot is greater than max slot")
 
 	// latest finalized epoch we've got balances summarized for stakers
-	finalizedEpoch   uint64
-	finalizedVersion uint64
+	finalizedEpoch           uint64
+	finalizedVersion         uint64
+	finalizedWithdrawVersion uint64
 
 	latestChangesBytes = types.NSTZeroChanges
 

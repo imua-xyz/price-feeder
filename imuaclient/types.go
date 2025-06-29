@@ -634,7 +634,7 @@ func Init(conf *feedertypes.Config, mnemonic, privFile string, txOnly bool, stan
 		file, err := os.Open(path.Join(confSender.Path, privFile))
 		if err != nil {
 			// return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to open consensuskey file, %v", err))
-			return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to open consensuskey file, path:%s, error:%v", privFile, err))
+			return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to open consensuskey file, path:%s, privFile:%s, error:%v", confSender.Path, privFile, err))
 		}
 		defer file.Close()
 		var privKey feedertypes.PrivValidatorKey
