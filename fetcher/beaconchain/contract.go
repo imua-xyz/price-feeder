@@ -2,6 +2,7 @@ package beaconchain
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"strings"
 
@@ -19,7 +20,7 @@ const (
   {"constant":true,"inputs":[],"name":"getWhitelistedTokensCount","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"}
 ]`
 	capsuleABI = `[
-{"constant":true,"inputs":[],"name":"isInClaimProgress","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"}
+{"constant":true,"inputs":[],"name":"isInClaimProgress","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
 {"constant":true,"inputs":[],"name":"withdrawableBalance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
 	]`
 )
@@ -34,11 +35,11 @@ func CallOwnerToCapsule(
 ) (common.Address, error) {
 	parsedABI, err := abi.JSON(strings.NewReader(abiJSON))
 	if err != nil {
-		return common.Address{}, err
+		return common.Address{}, fmt.Errorf("failed to parse abi, error: %w", err)
 	}
 	input, err := parsedABI.Pack("ownerToCapsule", stakerAddress)
 	if err != nil {
-		return common.Address{}, err
+		return common.Address{}, fmt.Errorf("failed to pack input, error: %w", err)
 	}
 	callMsg := ethereum.CallMsg{
 		To:   &proxyAddress,
@@ -46,12 +47,12 @@ func CallOwnerToCapsule(
 	}
 	output, err := ethClient.CallContract(context.Background(), callMsg, blockNumber)
 	if err != nil {
-		return common.Address{}, err
+		return common.Address{}, fmt.Errorf("failed to call contract, error: %w", err)
 	}
 	var capsuleAddress common.Address
 	err = parsedABI.UnpackIntoInterface(&capsuleAddress, "ownerToCapsule", output)
 	if err != nil {
-		return common.Address{}, err
+		return common.Address{}, fmt.Errorf("failed to unpack output, error: %w", err)
 	}
 	return capsuleAddress, nil
 }

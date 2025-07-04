@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/url"
+	"os"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -13,8 +14,7 @@ import (
 
 const (
 	testProxyAddressHex = "0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172"
-	// testEthRpcUrl       = "https://ethereum-holesky.publicnode.com"
-	testEthRpcUrl = "https://rpc.ankr.com/eth_holesky/a5d2626c4027e6d924c870d2558bc774bc995ce917a17a654a92856b3279a586"
+	testEthRpcUrl       = "https://ethereum-holesky.publicnode.com"
 )
 
 func TestGetEpoch(t *testing.T) {
@@ -31,7 +31,7 @@ func TestGetEpoch(t *testing.T) {
 		//		"9",
 		// vidxStr,
 	}
-	urlEndpoint, _ = url.Parse("https://rpc.ankr.com/premium-http/eth_beacon/a5d2626c4027e6d924c870d2558bc774bc995ce917a17a654a92856b3279a586")
+	urlEndpoint, _ = url.Parse("https://rpc.ankr.com/premium-http/eth_beacon/${ANKR_API_KEY}")
 
 	slotsPerEpoch = 32
 
@@ -53,28 +53,29 @@ func convertHexToIntStr(hexStr string) (string, error) {
 
 }
 
-// func TestOwnerToCapsuleCall(t *testing.T) {
-// 	stakerAddress := os.Getenv("TEST_STAKER_ADDRESS")
-// 	if stakerAddress == "" {
-// 		stakerAddress = "0x0000000000000000000000000000000000000000"
-// 	}
-//
-// 	client, err := ethclient.Dial(testEthRpcUrl)
-// 	if err != nil {
-// 		t.Fatalf("Failed to connect to Ethereum node: %v", err)
-// 	}
-//
-// 	proxyAddress := common.HexToAddress(testProxyAddressHex)
-// 	owner := common.HexToAddress(stakerAddress)
-// 	blockNumber := big.NewInt(0) // latest
-//
-// 	capsuleAddress, err := CallOwnerToCapsule(client, proxyAddress, bootstrapStorageABI, owner, blockNumber)
-// 	if err != nil {
-// 		t.Fatalf("Failed to call contract: %v", err)
-// 	}
-//
-// 	t.Logf("Capsule address for staker %s: %s", stakerAddress, capsuleAddress.Hex())
-// }
+func TestOwnerToCapsuleCall(t *testing.T) {
+	stakerAddress := os.Getenv("TEST_STAKER_ADDRESS")
+	if stakerAddress == "" {
+		stakerAddress = "0x0000000000000000000000000000000000000000"
+	}
+
+	client, err := ethclient.Dial(testEthRpcUrl)
+	if err != nil {
+		t.Fatalf("Failed to connect to Ethereum node: %v", err)
+	}
+
+	proxyAddress := common.HexToAddress(testProxyAddressHex)
+	owner := common.HexToAddress(stakerAddress)
+	blockNumber := big.NewInt(0) // latest
+
+	blockNumber = nil
+	capsuleAddress, err := CallOwnerToCapsule(client, proxyAddress, bootstrapStorageABI, owner, blockNumber)
+	if err != nil {
+		t.Fatalf("Failed to call contract: %v", err)
+	}
+
+	t.Logf("Capsule address for staker %s: %s", stakerAddress, capsuleAddress.Hex())
+}
 
 func TestCallWhitelistTokenAt(t *testing.T) {
 	client, err := ethclient.Dial(testEthRpcUrl)
@@ -151,4 +152,13 @@ func TestCompleteCL_EL_Workflow(t *testing.T) {
 	} else {
 		t.Logf("[CL] No balance returned for validator %s", validatorIdx)
 	}
+}
+
+func TestCapsuleQueries(t *testing.T) {
+	client, err := ethclient.Dial(testEthRpcUrl)
+	if err != nil {
+		t.Fatalf("Failed to connect to Ethereum node: %v", err)
+	}
+	v, valid, err := getCapsuleValidBalance(client, "0x90618D1cDb01bF37c24FC012E70029DA20fCe971", nil)
+	fmt.Println(v, valid, err)
 }

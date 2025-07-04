@@ -32,12 +32,12 @@ func getCapsuleValidBalance(ethClient *ethclient.Client, capsuleAddr string, blo
 	var valid bool
 	parsedABI, err := abi.JSON(strings.NewReader(capsuleABI))
 	if err != nil {
-		return nil, valid, err
+		return nil, valid, fmt.Errorf("failed to parse capsuleABI, err:%w", err)
 	}
 
 	callData, err := parsedABI.Pack("isInClaimProgress")
 	if err != nil {
-		return nil, valid, err
+		return nil, valid, fmt.Errorf("failed to pack calldata_isInClaimProgress, err:%w", err)
 	}
 
 	callMsg := ethereum.CallMsg{
@@ -46,36 +46,36 @@ func getCapsuleValidBalance(ethClient *ethclient.Client, capsuleAddr string, blo
 	}
 	output, err := ethClient.CallContract(context.Background(), callMsg, blockNumber)
 	if err != nil {
-		return nil, valid, err
+		return nil, valid, fmt.Errorf("failed to call contract to query isInClaimProgress, err:%w", err)
 	}
 
 	var inWithdrawProgress bool
 	err = parsedABI.UnpackIntoInterface(&inWithdrawProgress, "isInClaimProgress", output)
 	if err != nil || inWithdrawProgress {
-		return nil, valid, err
+		return nil, valid, fmt.Errorf("capsule %s is in withdrawal progress or unpack error: %w", capsuleAddr, err)
 	}
 
 	valid = true
 	callData, err = parsedABI.Pack("withdrawableBalance")
 	if err != nil {
-		return nil, valid, err
+		return nil, valid, fmt.Errorf("failed to pack calldata_withdrawableBalance, err:%w", err)
 	}
 
 	callMsg = ethereum.CallMsg{To: &address, Data: callData}
 	output, err = ethClient.CallContract(context.Background(), callMsg, blockNumber)
 	if err != nil {
-		return nil, valid, err
+		return nil, valid, fmt.Errorf("failed to call contract to query withdrawableBalance, err:%w", err)
 	}
 
 	var withdrawable *big.Int
 	err = parsedABI.UnpackIntoInterface(&withdrawable, "withdrawableBalance", output)
 	if err != nil {
-		return nil, valid, err
+		return nil, valid, fmt.Errorf("failed to unpack withdrawableBalance, err:%w", err)
 	}
 
 	balance, err := ethClient.BalanceAt(context.Background(), address, blockNumber)
 	if err != nil {
-		return nil, valid, err
+		return nil, valid, fmt.Errorf("failed to get capsule balance, err:%w", err)
 	}
 	if balance.Cmp(withdrawable) < 0 {
 		return nil, valid, fmt.Errorf("capsule balance %s is less than withdrawable balance %s", balance.String(), withdrawable.String())
