@@ -588,47 +588,44 @@ func newFeeder(tf *oracletypes.TokenFeeder, feederID int, fetcher PriceFetcher, 
 
 // return true when 1st phase for input roundID had been finalized
 func (f *feeder) send2ndPhaseTx() ([]uint32, bool) {
-	if f.twoPhasesInfo == nil {
+	pwfs, err := f.NextSendablePieceWithProofs(f.roundID)
+
+	if err != nil {
+		if errors.Is(err, ErrNoAvailableNextIndex) {
+			return nil, true
+		}
+		if f.twoPhasesInfo != nil {
+			f.logger.Debug("failed to get next sendable piece with proofs for 2nd-phase price submission", "roundID", f.roundID, "error", err)
+		}
 		return nil, false
 	}
-	pwfs, err := f.NextSendablePieceWithProofs(f.roundID)
-	if err == nil {
-		ret := make([]uint32, 0)
-		for _, pwf := range pwfs {
-			pInfos := make([]*fetchertypes.PriceInfo, 0, 2)
+	ret := make([]uint32, 0)
+	for _, pwf := range pwfs {
+		pInfos := make([]*fetchertypes.PriceInfo, 0, 2)
+		pInfos = append(pInfos, &fetchertypes.PriceInfo{
+			Price:   pwf.Piece,
+			RoundID: fmt.Sprintf("%d", pwf.PieceIndex),
+		})
+		if len(pwf.IndexesStr) > 0 && len(pwf.HashesStr) > 0 {
 			pInfos = append(pInfos, &fetchertypes.PriceInfo{
-				Price:   pwf.Piece,
-				RoundID: fmt.Sprintf("%d", pwf.PieceIndex),
+				Price:   pwf.HashesStr,
+				RoundID: pwf.IndexesStr,
 			})
-			if len(pwf.IndexesStr) > 0 && len(pwf.HashesStr) > 0 {
-				pInfos = append(pInfos, &fetchertypes.PriceInfo{
-					Price:   pwf.HashesStr,
-					RoundID: pwf.IndexesStr,
-				})
-			}
-			oldIndex := f.UpdateSentLatestPieceIndex(f.roundID, int64(pwf.PieceIndex))
-			res, err := f.submitter.SendTx2Phases(uint64(f.feederID), f.baseBlock, pInfos, oracletypes.AggregationPhaseTwo, 1)
-			if err != nil || res.GetTxResponse().Code != statusOk {
-				f.logger.Error("failed to send tx for 2nd-phase price submission", "roundID", f.roundID, "feeder", f.Info(), "error", err, "res.RawLog", res.GetTxResponse().RawLog)
-				// revert local index if failed to submit
-				f.UpdateSentLatestPieceIndex(f.roundID, oldIndex)
-				// piece index is not updated, so break the loop
-				// TODO: ? should we break the loop here? or just try over following pieces
-				break
-			}
-			ret = append(ret, pwf.PieceIndex)
-			f.logger.Info("sent tx to submit price with rawData piece for 2nd phase", "pieceIndex", pwf.PieceIndex, "baseBlock", f.baseBlock, "roundID", f.roundID)
 		}
-		// the feeder is in phase two submitting rawData piece, so skip checking for phase one
-		return ret, true
+		oldIndex := f.UpdateSentLatestPieceIndex(f.roundID, int64(pwf.PieceIndex))
+		res, err := f.submitter.SendTx2Phases(uint64(f.feederID), f.baseBlock, pInfos, oracletypes.AggregationPhaseTwo, 1)
+		if err != nil || res.GetTxResponse().Code != statusOk {
+			f.logger.Error("failed to send tx for 2nd-phase price submission", "roundID", f.roundID, "feeder", f.Info(), "error", err, "res.RawLog", res.GetTxResponse().RawLog)
+			// revert local index if failed to submit
+			f.UpdateSentLatestPieceIndex(f.roundID, oldIndex)
+			// piece index is not updated, so break the loop
+			// TODO: ? should we break the loop here? or just try over following pieces
+			break
+		}
+		ret = append(ret, pwf.PieceIndex)
 	}
-
-	f.logger.Info("didn't able to get next sendable piece with proofs for 2nd-phase price submission", "roundID", f.roundID, "error", err)
-	if errors.Is(err, ErrNoAvailableNextIndex) {
-		return nil, true
-	}
-
-	return nil, false
+	// the feeder is in phase two submitting rawData piece, so skip checking for phase one
+	return ret, true
 }
 
 func (f *feeder) start() {
@@ -651,14 +648,17 @@ func (f *feeder) start() {
 
 				if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {
 					if len(sentIndexes) > 0 {
-						f.logger.Info("triggered 2nd-phase rawData piece message transaction sending", "current height", h.commitHeight, "price height", h.priceHeight, "sent_count", len(sentIndexes), "indexes", sentIndexes)
+						f.logger.Info("triggered 2nd-phase rawData piece message transaction sending", "current height",
+							h.commitHeight, "price height", h.priceHeight, "sent_count", len(sentIndexes), "indexes", sentIndexes)
+					} else if delta < 3 {
+						f.logger.Info("skip trigger for 1st-phase price submission due to 1st-phase root has been finalized")
 					}
 					continue
 				}
 
 				// TODO: replace 3 with MaxNonce
 				if delta < 3 {
-					f.logger.Info("trigger feeder", "height_commit", h.commitHeight, "height_price", h.priceHeight)
+					f.logger.Info("trigger feeder for 1st-phase price submission", "height_commit", h.commitHeight, "height_price", h.priceHeight)
 					f.SetRoundID(roundID)
 
 					if price, err := f.fetcher.GetLatestPrice(f.source, f.token); err != nil {
@@ -673,10 +673,8 @@ func (f *feeder) start() {
 					} else {
 						if price.IsZero() {
 							f.logger.Info("got nil latest price, skip submitting price", "roundID", roundID, "delta", delta)
-							f.logger.Debug("got latestprice equal to local cache", "feeder", f.Info())
 							continue
 						}
-
 						if f.IsTwoPhases() {
 							_, rootHash := f.AddRawData(roundID, []byte(price.Price), f.twoPhasesPieceSize)
 							if len(f.lastPrice.price.Price) > 0 {
@@ -750,42 +748,45 @@ func (f *feeder) start() {
 					rootHash, err := f.lastPrice.updatePrice(price, true)
 					if err != nil || len(rootHash) == 0 {
 						if err != nil {
-							f.logger.Error("failed to update local price", "error", err)
+							f.logger.Error("[price update event]-nst failed to update local price", "error", err)
 						} else {
-							f.logger.Info("reset local price to empty", "roundID", f.roundID, "price", price.price)
+							f.logger.Info("[price update event]-nst reset local price to empty", "roundID", f.roundID)
 						}
 						continue
 					}
-					f.logger.Info("finalize rootHash", "root", rootHash)
+					f.logger.Info("[price update event]-nst finalize rootHash", "root", rootHash)
 					f.FinalizeRawData(f.roundID, []byte(rootHash))
 					if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {
-						f.logger.Info("sent 2nd phase rawdata piece transaction after 1st phase price updated", "sent_count", len(sentIndexes), "indexes", sentIndexes)
+						f.logger.Info("[price update event]-nst sent 2nd phase rawdata piece transaction after recived 1st phase price update event immediately",
+							"sent_count", len(sentIndexes), "indexes", sentIndexes)
 					}
 				} else if _, err := f.lastPrice.updatePrice(price, false); err != nil {
-					f.logger.Error("failed to update local price", "error", err)
+					f.logger.Error("[price update event] failed to update local price with latest price from imuachain", "error", err)
 					continue
 				}
-				f.logger.Info("synced local price with latest price from imuachain", "price", price.price, "txHeight", price.txHeight)
+				f.logger.Info("[price update event] synced local price with latest price from imuachain", "price", price.price, "txHeight", price.txHeight)
 			case req := <-f.paramsCh:
+				f.logger.Info("[params update event] received params update event", "new params", req.params)
 				if err := f.updateFeederParams(req.params); err != nil {
 					// This should not happen under this case.
-					f.logger.Error("failed to update params", "new params", req.params)
+					f.logger.Error("[params update event] failed to update params")
 				}
 				req.result <- &updateParamsRes{}
 				// TODO: ? no need to take care of concurrency for these requests of nstStakers change with channel
 			case req := <-f.nstStakersCh:
+				f.logger.Info("[nstStakers update event] received deposit/withdraw event")
 				v, _ := req.info.Versions()
 				if err := f.stakers.CacheDepositsWithdraws(req.info.Deposits(), v, req.info.Withdraws()); err != nil {
 					req.res <- err
 				} else {
 					if len(req.info.Deposits()) > 0 {
-						f.logger.Info("successfully cached deposits", "updated cached-version", v, "feederID", f.feederID)
+						f.logger.Info("[nstStakers update event] successfully cached deposits", "updated cached-version", v)
 						if v == 1 {
 							if err := f.stakers.GrowVersionsFromCacheByDepositWithdraw(v, 0); err != nil {
-								f.logger.Error("failed to grow versions from cache on first deposit", "error", err, "feederID", f.feederID)
+								f.logger.Error("[nstStakers update event] failed to grow versions from cache on first deposit", "error", err)
 								req.res <- err
 							} else {
-								f.logger.Info("successfully grow versions from cache on first deposit, then reset stakerlist for fetcher", "feederID", f.feederID)
+								f.logger.Info("[nstStakers update event] successfully grow versions from cache on first deposit, then reset stakerlist for fetcher")
 								sInfos, version, withdrawVersion := f.stakers.GetStakerInfos()
 								f.fetcherNST.SetNSTStakers(f.source, sInfos, version, withdrawVersion)
 							}
@@ -793,20 +794,23 @@ func (f *feeder) start() {
 					}
 					if len(req.info.Withdraws()) > 0 {
 						if _, err := f.lastPrice.updatePrice(nil, true); err != nil {
-							f.logger.Error("failed to reset local price to empty after withdraws", "error", err, "feederID", f.feederID)
+							f.logger.Error("[nstStakers update event] failed to reset local price to empty after withdraws", "error", err)
 						} else {
-							f.logger.Info("successfully cached withdraws, and reset local price to empty", "feederID", f.feederID, "withdraws", req.info.Withdraws(), "roundID", f.roundID)
+							f.logger.Info("[nstStakers update event] successfully cached withdraws, and reset local price to empty",
+								"withdraws", req.info.Withdraws(), "roundID", f.roundID)
 						}
 					}
 					req.res <- nil
 				}
 			case req := <-f.nstBalanceCh:
+				f.logger.Info("received nstBalance update event")
 				version, withdrawVersion := req.info.Versions()
 				req.res <- f.applyNSTBalanceUpdate(req.info.RootHash(), version, withdrawVersion)
 			case req := <-f.nstPieceCh:
 				req.res <- f.updateNSTPieceIndex(req.pieceIndex)
 				if sentIndexes, is2nd := f.send2ndPhaseTx(); is2nd {
-					f.logger.Info("sent 2nd phase rawdata piece transaction after 2nd rawdata piece index updated", "sent_count", len(sentIndexes), "indexes", sentIndexes)
+					f.logger.Info("[nstPieces update event] sent 2nd phase rawdata piece transaction after 2nd rawdata piece index updated",
+						"sent_count", len(sentIndexes), "indexes", sentIndexes)
 				}
 			}
 		}
