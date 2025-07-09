@@ -1077,6 +1077,11 @@ func (fs *Feeders) Start() {
 					feeder, ok := fs.feederMap[int(feederID)]
 					if !ok {
 						fs.logger.Error("failed to get feeder by feederID when update price for feeders", "updatePriceReq", req)
+						res = append(res, &failedFeedersWithError{
+							feederID: feederID,
+							err:      errors.New("feeder not found"),
+						})
+						continue
 					}
 					if err := feeder.updateNSTStakers(stakerInfo); err != nil {
 						res = append(res, &failedFeedersWithError{

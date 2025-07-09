@@ -31,6 +31,10 @@ func TestGetEpoch(t *testing.T) {
 		//		"9",
 		// vidxStr,
 	}
+	ankrApiKey := os.Getenv("ANKR_API_KEY")
+	if ankrApiKey == "" {
+		t.Skip("ANKR_API_KEY not set")
+	}
 	urlEndpoint, _ = url.Parse("https://rpc.ankr.com/premium-http/eth_beacon/${ANKR_API_KEY}")
 
 	slotsPerEpoch = 32

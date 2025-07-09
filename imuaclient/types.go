@@ -244,7 +244,7 @@ func (s *SubscribeResult) getEventNSTBalances() (EventNSTBalances, error) {
 	ret := make(EventNSTBalances)
 
 	for _, nstBC := range s.Result.Events.NSTBalanceChange {
-		tmp := strings.Split(nstBC, "|")
+		tmp := strings.Split(nstBC, delimiterItems)
 		if len(tmp) != 4 {
 			return nil, errors.New("failed to parse nstBalanceChange from event_txUpdateNSTBalance response, expected 3 parts")
 		}
@@ -369,12 +369,17 @@ func (s *SubscribeResult) getEventNSTStakers() (EventNSTStakers, error) {
 
 	tmp := s.Result.Events.NSTStakersChange[0]
 
-	nstChanges := strings.Split(tmp, "|")
+	// Add format validation
+	if !strings.Contains(tmp, delimiterItems) {
+		return nil, fmt.Errorf("invalid format: expected pipe-delimited format, got: %s", tmp)
+	}
+
+	nstChanges := strings.Split(tmp, delimiterItems)
 
 	ret := make(EventNSTStakers)
 
 	for _, nstChange := range nstChanges {
-		parsed := strings.Split(nstChange, "_")
+		parsed := strings.Split(nstChange, delimiterFields)
 		if len(parsed) != 7 {
 			return nil, fmt.Errorf("failed to parse nstChange: expected 7 parts but got %d, nstChange: %s", len(parsed), nstChange)
 		}
@@ -509,7 +514,7 @@ func (s *SubscribeResult) TxHeight() (int64, bool) {
 func (s *SubscribeResult) FeederIDs() (feederIDs map[int64]struct{}, valid bool) {
 	events := s.Result.Events
 	if len(events.PriceUpdate) > 0 && events.PriceUpdate[0] == updated {
-		if feederIDsStr := strings.Split(events.FeederIDs[0], "_"); len(feederIDsStr) > 0 {
+		if feederIDsStr := strings.Split(events.FeederIDs[0], delimiterFields); len(feederIDsStr) > 0 {
 			feederIDs = make(map[int64]struct{})
 			for _, feederIDStr := range feederIDsStr {
 				id, err := strconv.ParseInt(feederIDStr, 10, 64)
@@ -533,10 +538,10 @@ func (s *SubscribeResult) FinalPrice() (prices []*FinalPrice, valid bool) {
 	if fps := s.Result.Events.FinalPrice; len(fps) > 0 {
 		prices = make([]*FinalPrice, 0, len(fps))
 		for _, price := range fps {
-			parsed := strings.Split(price, "_")
+			parsed := strings.Split(price, delimiterFields)
 			if l := len(parsed); l > 4 {
 				// nsteth
-				parsed[2] = strings.Join(parsed[2:l-1], "_")
+				parsed[2] = strings.Join(parsed[2:l-1], delimiterFields)
 				parsed[3] = parsed[l-1]
 				parsed = parsed[:4]
 			}
@@ -588,6 +593,9 @@ const (
 	Chainlink         uint64 = 1
 	denom                    = "hua"
 	withdrawValidator        = "0xFFFFFFFFFFFFFFFF"
+
+	delimiterItems  = "|"
+	delimiterFields = "_"
 )
 
 const (

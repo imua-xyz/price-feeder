@@ -543,14 +543,15 @@ func (s *StakerInfo) RemoveValidator(validator string, balance uint64) bool {
 	if s == nil {
 		return false
 	}
-	if !slices.Contains(s.Validators, validator) {
-		return false
-	}
 	if s.Balance < balance {
 		return false
 	}
+	idx := slices.Index(s.Validators, validator)
+	if idx == -1 {
+		return false
+	}
 	s.Balance -= balance
-	s.Validators = slices.Delete(s.Validators, slices.Index(s.Validators, validator), slices.Index(s.Validators, validator)+1)
+	s.Validators = slices.Delete(s.Validators, idx, idx+1)
 	return true
 }
 
@@ -1140,7 +1141,7 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version *oracletypes.N
 			s.SInfosAdd[k] = v
 		}
 		// append withdraws
-		s.WithdrawInfos = append(s.WithdrawInfos, s.WithdrawInfos...)
+		s.WithdrawInfos = append(s.WithdrawInfos, withdraws...)
 	}
 	s.Version = version.FeedVersion.Version
 	s.WithdrawVersion = version.FeedWithdrawVersion
