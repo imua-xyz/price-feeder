@@ -1177,7 +1177,9 @@ func IsContractAddress(addr string, client *ethclient.Client, logger feedertypes
 
 	// Ensure it is a contract address.
 	address := common.HexToAddress(addr)
-	bytecode, err := client.CodeAt(context.Background(), address, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	bytecode, err := client.CodeAt(ctx, address, nil)
 	if err != nil {
 		logger.Error("failed to get code at contract address", "address", address, "error", err)
 		return false
