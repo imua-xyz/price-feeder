@@ -22,7 +22,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	}
 
 	// use 'no copy' version to avoid copying stakers
-	sInfos, version := s.Stakers.GetStakersNoCopy()
+	sInfos, version, withdrawVersion := s.Stakers.GetStakersNoCopy()
 	if len(sInfos) == 0 {
 		// return zero price when there's no stakers
 		return &types.PriceInfo{}, nil
@@ -35,7 +35,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	}
 
 	// epoch not updated, just return without fetching since effective-balance has not changed
-	if epoch <= finalizedEpoch && version <= finalizedVersion {
+	if version <= finalizedVersion && withdrawVersion <= finalizedWithdrawVersion {
 		s.Logger.Info("fetch active stake from solana, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)
 		return &types.PriceInfo{
 			Price: string(latestChangesBytes),
@@ -74,11 +74,12 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		sort.Slice(changedStakerBalances, func(i, j int) bool {
 			return changedStakerBalances[i].StakerIndex < changedStakerBalances[j].StakerIndex
 		})
-		nstBS := oracletypes.RawDataNST{
+		nstBC := oracletypes.RawDataNST{
 			Version:           version,
 			NstBalanceChanges: changedStakerBalances,
+			WithdrawVersion:   withdrawVersion,
 		}
-		bz, err := proto.Marshal(&nstBS)
+		bz, err := proto.Marshal(&nstBC)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal nstBalanceChanges, error:%w", err)
 		}
@@ -91,7 +92,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 
 	return &types.PriceInfo{
 		Price:   string(latestChangesBytes),
-		RoundID: fmt.Sprintf("%s_%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10)),
+		RoundID: fmt.Sprintf("%s|%s|%s", strconv.FormatUint(finalizedEpoch, 10), strconv.FormatUint(version, 10), strconv.FormatUint(withdrawVersion, 10)),
 	}, nil
 }
 

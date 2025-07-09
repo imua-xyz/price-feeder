@@ -12,10 +12,11 @@ import (
 
 type source nsttypes.Source
 
-func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version uint64) {
+func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version, withdrawVersion uint64) {
 	s.Stakers.Locker.Lock()
 	s.Stakers.SInfos = sInfos
 	s.Stakers.Version = version
+	s.Stakers.WithdrawVersion = withdrawVersion
 	s.Stakers.Locker.Unlock()
 }
 

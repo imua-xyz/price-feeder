@@ -22,7 +22,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 	}
 
 	// use 'no copy' version to avoid copying stakers
-	sInfos, version := s.Stakers.GetStakersNoCopy()
+	sInfos, version, _ := s.Stakers.GetStakersNoCopy()
 	if len(sInfos) == 0 {
 		// return zero price when there's no stakers
 		return &types.PriceInfo{}, nil

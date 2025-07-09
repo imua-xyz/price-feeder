@@ -45,5 +45,9 @@ build:
 build-devmode:
 	go build -ldflags "$(LDFLAGS)" --tags devmode -o ./build/price-feeder
 
+proto-gen:
+	cd proto && buf generate
+	cp -r github.com/imua-xyz/price-feeder/internal/* ./internal/
+	rm -rf github.com
 
 .PHONY: build

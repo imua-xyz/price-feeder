@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	cfgFile      string
-	sourcesPath  string
-	feederConfig *feedertypes.Config
+	cfgFile       string
+	sourcesPath   string
+	feederConfig  *feedertypes.Config
+	logImuaFormat bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -30,9 +31,16 @@ to quickly create a Cobra application.`,
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Name() == "version" || cmd.Name() == "status" {
+			return nil
+		}
 		// load and parse config file
 		var err error
 		feederConfig, err = feedertypes.InitConfig(cfgFile)
+		if len(logPath) > 0 {
+			// set log file
+			feederConfig.Log.Path = logPath
+		}
 		return err
 	},
 }
@@ -54,16 +62,22 @@ func init() {
 	// will be global for your application.
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.price-feeder.yaml)")
-	rootCmd.PersistentFlags().StringVar(&sourcesPath, "sources", "", "config file of sources(default is $HOME/.xx.yaml)")
+	rootCmd.PersistentFlags().StringVar(&sourcesPath, "sources_path", "", "config file of sources(default is $HOME/.xx.yaml)")
+	rootCmd.PersistentFlags().BoolVar(&logImuaFormat, "log_imua_format", false, "use imua log format")
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
 
 	startCmd.Flags().StringVarP(&mnemonic, "mnemonic", "m", "", "mnemonic of consensus key")
+	startCmd.Flags().StringVarP(&logPath, "log_path", "l", "", "log file name")
+	startCmd.Flags().IntVar(&grpcPort, "status_port", 0, "gRPC port to listen on for status server")
+
+	statusCmd.Flags().StringVarP(&grpcAddr, "grpc_addr", "g", "", "gRPC address to connect to the price feeder")
 
 	rootCmd.AddCommand(
 		startCmd,
 		debugStartCmd,
 		versionCmd,
+		statusCmd,
 	)
 }

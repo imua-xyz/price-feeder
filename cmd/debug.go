@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/imua-xyz/price-feeder/debugger"
+	debugger "github.com/imua-xyz/price-feeder/internal/debugger"
+	debuggertypes "github.com/imua-xyz/price-feeder/internal/debugger/types"
+	itypes "github.com/imua-xyz/price-feeder/internal/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -32,8 +33,8 @@ var debugStartCmd = &cobra.Command{
 	Short: "start listening to new blocks",
 	Long:  "start listening to new blocks",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logger := feedertypes.NewLogger(zapcore.DebugLevel)
-		DebugPriceFeeder(feederConfig, logger, mnemonic, sourcesPath)
+		logger := feedertypes.NewLogger(feedertypes.LogConf{Level: "debug"})
+		debugger.DebugPriceFeeder(feederConfig, logger, mnemonic, sourcesPath, itypes.PrivFile)
 		return nil
 	},
 }
@@ -53,11 +54,11 @@ var debugSendCmd = &cobra.Command{
 			return err
 		}
 		msgStr := args[0]
-		msgPrice := &debugger.PriceMsg{}
+		msgPrice := &debuggertypes.PriceMsg{}
 		if err := json.Unmarshal([]byte(msgStr), msgPrice); err != nil {
 			return err
 		}
-		res, err := sendTx(feederID, height, msgPrice, feederConfig.Debugger.Grpc)
+		res, err := debugger.SendTx(feederID, height, msgPrice, feederConfig.Debugger.Grpc)
 		if err != nil {
 			return err
 		}
@@ -80,14 +81,14 @@ var debugSendImmCmd = &cobra.Command{
 			return err
 		}
 		msgStr := args[0]
-		msgPrice := &PriceJSON{}
+		msgPrice := &debugger.PriceJSON{}
 		if err := json.Unmarshal([]byte(msgStr), msgPrice); err != nil {
 			return err
 		}
-		if err := msgPrice.validate(); err != nil {
+		if err := msgPrice.Validate(); err != nil {
 			return err
 		}
-		res, err := sendTxImmediately(feederID, msgPrice)
+		res, err := debugger.SendTxImmediately(feederID, msgPrice, mnemonic, itypes.PrivFile, feederConfig)
 		if err != nil {
 			return err
 		}
@@ -97,6 +98,10 @@ var debugSendImmCmd = &cobra.Command{
 }
 
 func printProto(m proto.Message) {
+	if m == nil {
+		fmt.Println("nil proto message")
+		return
+	}
 	marshaled, err := protojson.MarshalOptions{EmitUnpopulated: true, UseProtoNames: true}.Marshal(m)
 	if err != nil {
 		fmt.Printf("failed to print proto message, error:%v", err)

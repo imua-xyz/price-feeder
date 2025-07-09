@@ -1,11 +1,14 @@
 package types
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,11 +16,14 @@ import (
 
 	"slices"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/ethclient"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
+// SourceInf defines the interface for a price source, including initialization, starting, adding tokens, and stopping.
 type SourceInf interface {
 	// InitTokens used for initialization, it should only be called before 'Start'
 	// when the source is not 'running', this method vill overwrite the source's 'tokens' list
@@ -31,8 +37,6 @@ type SourceInf interface {
 
 	// GetName returns name of the source
 	GetName() string
-	// Status returns the status of all tokens configured in the source: running or not
-	Status() map[string]*tokenStatus
 
 	// ReloadConfig reload the config file for the source
 	//	ReloadConfigForToken(string) error
@@ -40,22 +44,29 @@ type SourceInf interface {
 	// Stop closes all running routine generated from the source
 	Stop()
 
+	PriceUpdate() bool
+
+	ResetPriceUpdate()
+
 	// TODO: add some interfaces to achieve more fine-grained management
 	// StopToken(token string)
 	// ReloadConfigAll()
 	// RestarAllToken()
 }
 
+// SourceNSTInf extends SourceInf with a method to set NST stakers and version.
 type SourceNSTInf interface {
 	SourceInf
-	SetNSTStakers(sInfos StakerInfos, version uint64)
+	SetNSTStakers(sInfos StakerInfos, version, withdrawVersion uint64)
 }
 
+// SourceInitFunc is a function type for initializing a SourceInf from a config path and logger.
 type SourceInitFunc func(cfgPath string, logger feedertypes.LoggerInf) (SourceInf, error)
 
+// SourceFetchFunc is a function type for fetching a price for a given token.
 type SourceFetchFunc func(token string) (*PriceInfo, error)
 
-// SourceReloadConfigFunc reload source config file
+// SourceReloadConfigFunc is a function type for reloading a source's config file for a specific token.
 // reload meant to be called during source running, the concurrency should be handled well
 type SourceReloadConfigFunc func(config, token string) error
 
@@ -64,6 +75,7 @@ type NativeRestakingInfo struct {
 	TokenID string
 }
 
+// PriceInfo holds price data for a token, including value, decimals, timestamp, and round ID.
 type PriceInfo struct {
 	Price     string
 	Decimal   int32
@@ -82,10 +94,11 @@ type tokenInfo struct {
 	price  *PriceSync
 	active *atomic.Bool
 }
-type tokenStatus struct {
-	name   string
-	price  PriceInfo
-	active bool
+
+type TokenStatus struct {
+	Name   string
+	Price  PriceInfo
+	Active bool
 }
 
 type addTokenReq struct {
@@ -98,12 +111,12 @@ type addTokenRes struct {
 	err   error
 }
 
-// IsZero is used to check if a PriceInfo has not been assigned, similar to a nil value in a pointer variable
+// IsZero checks if a PriceInfo has not been assigned a value.
 func (p PriceInfo) IsZero() bool {
 	return len(p.Price) == 0
 }
 
-// Equal compare two PriceInfo ignoring the timestamp, roundID fields
+// EqualPrice compares two PriceInfo values, ignoring timestamp and roundID fields.
 func (p PriceInfo) EqualPrice(price PriceInfo) bool {
 	if p.Price == price.Price &&
 		p.Decimal == price.Decimal {
@@ -126,6 +139,7 @@ func (p PriceInfo) EqualToBase64Price(price PriceInfo) bool {
 	return false
 }
 
+// NewPriceSync creates a new PriceSync instance with a mutex and empty PriceInfo.
 func NewPriceSync() *PriceSync {
 	return &PriceSync{
 		lock: new(sync.RWMutex),
@@ -133,6 +147,7 @@ func NewPriceSync() *PriceSync {
 	}
 }
 
+// Get returns a copy of the current PriceInfo in a concurrency-safe way.
 func (p *PriceSync) Get() PriceInfo {
 	p.lock.RLock()
 	price := *p.info
@@ -140,6 +155,7 @@ func (p *PriceSync) Get() PriceInfo {
 	return price
 }
 
+// Update sets the PriceInfo if it differs from the current value, returning true if updated.
 func (p *PriceSync) Update(price PriceInfo) (updated bool) {
 	p.lock.Lock()
 	if !price.EqualPrice(*p.info) {
@@ -150,12 +166,14 @@ func (p *PriceSync) Update(price PriceInfo) (updated bool) {
 	return
 }
 
+// Set sets the PriceInfo value in a concurrency-safe way.
 func (p *PriceSync) Set(price PriceInfo) {
 	p.lock.Lock()
 	*p.info = price
 	p.lock.Unlock()
 }
 
+// NewTokenInfo creates a new tokenInfo with the given name and PriceSync.
 func NewTokenInfo(name string, price *PriceSync) *tokenInfo {
 	return &tokenInfo{
 		name:   name,
@@ -164,22 +182,22 @@ func NewTokenInfo(name string, price *PriceSync) *tokenInfo {
 	}
 }
 
-// GetPriceSync returns the price structure which has lock to make sure concurrency safe
+// GetPriceSync returns the PriceSync for the token.
 func (t *tokenInfo) GetPriceSync() *PriceSync {
 	return t.price
 }
 
-// GetPrice returns the price info
+// GetPrice returns the current PriceInfo for the token.
 func (t *tokenInfo) GetPrice() PriceInfo {
 	return t.price.Get()
 }
 
-// GetActive returns the active status
+// GetActive returns whether the token is active.
 func (t *tokenInfo) GetActive() bool {
 	return t.active.Load()
 }
 
-// SetActive set the active status
+// SetActive sets the active status for the token.
 func (t *tokenInfo) SetActive(v bool) {
 	t.active.Store(v)
 }
@@ -212,9 +230,11 @@ type Source struct {
 	locker    *sync.Mutex
 	stop      chan struct{}
 	// 'fetch' interacts directly with data source
-	fetch            SourceFetchFunc
-	reload           SourceReloadConfigFunc
-	tokens           map[string]*tokenInfo
+	fetch  SourceFetchFunc
+	reload SourceReloadConfigFunc
+	tokens map[string]*tokenInfo
+	// tokensSnapshot   atomic.Value
+	priceUpdate      *atomic.Bool
 	activeTokenCount *atomic.Int32
 	interval         time.Duration
 	addToken         chan *addTokenReq
@@ -233,6 +253,7 @@ func NewSource(logger feedertypes.LoggerInf, name string, fetch SourceFetchFunc,
 		stop:               make(chan struct{}),
 		tokens:             make(map[string]*tokenInfo),
 		activeTokenCount:   new(atomic.Int32),
+		priceUpdate:        new(atomic.Bool),
 		priceList:          make(map[string]*PriceSync),
 		interval:           defaultInterval,
 		addToken:           make(chan *addTokenReq, defaultPendingTokensLimit),
@@ -391,13 +412,12 @@ func (s *Source) startFetchToken(token *tokenInfo) {
 					} else {
 						s.logger.Error("failed to fetch price", "source", s.name, "token", token.name, "error", err)
 						// TODO(leon): exist this routine after maximum fails ?
-						// s.tokens[token.name].active = false
-						// return
 					}
 				} else {
 					// update price
 					updated := token.price.Update(*price)
 					if updated {
+						s.priceUpdate.Store(true)
 						s.logger.Info("updated price", "source", s.name, "token", token.name, "price", *price)
 					}
 				}
@@ -417,31 +437,25 @@ func (s *Source) GetName() string {
 	return s.name
 }
 
-func (s *Source) Status() map[string]*tokenStatus {
-	s.locker.Lock()
-	ret := make(map[string]*tokenStatus)
-	for tName, token := range s.tokens {
-		ret[tName] = &tokenStatus{
-			name:   tName,
-			price:  token.price.Get(),
-			active: token.GetActive(),
-		}
-	}
-	s.locker.Unlock()
-	return ret
+func (s *Source) PriceUpdate() bool {
+	return s.priceUpdate.Load()
+}
+
+func (s *Source) ResetPriceUpdate() {
+	s.priceUpdate.Store(false)
 }
 
 type NSTToken string
 
 const (
 	defaultPendingTokensLimit = 5
-	// defaultInterval           = 30 * time.Second
+	defaultInterval           = 30 * time.Second
 	// interval set for debug
-	defaultInterval = 5 * time.Second
-	Chainlink       = "chainlink"
-	BaseCurrency    = "usdt"
-	BeaconChain     = "beaconchain"
-	Solana          = "solana"
+	// defaultInterval = 5 * time.Second
+	Chainlink    = "chainlink"
+	BaseCurrency = "usdt"
+	BeaconChain  = "beaconchain"
+	Solana       = "solana"
 
 	NativeTokenETH NSTToken = "nsteth"
 	NativeTokenSOL NSTToken = "nstsol"
@@ -450,8 +464,8 @@ const (
 )
 
 var (
-	// NSTETHZeroChanges = make([]byte, 32)
-	NSTZeroChanges = make([]byte, 0)
+	NSTZeroChanges              = make([]byte, 0)
+	EmptyRawDataChangesRootHash = sha256.Sum256([]byte{})
 	// source -> initializers of source
 	SourceInitializers   = make(map[string]SourceInitFunc)
 	ChainToSlotsPerEpoch = map[uint64]uint64{
@@ -473,20 +487,22 @@ var (
 	Logger feedertypes.LoggerInf
 )
 
+// SetNativeAssetID sets the asset ID for a given NSTToken.
 func SetNativeAssetID(nstToken NSTToken, assetID string) {
 	NSTAssetIDMap[nstToken] = assetID
 }
 
-// GetNSTSource returns source name as string
+// GetNSTSource returns the source name for a given NSTToken.
 func GetNSTSource(nstToken NSTToken) string {
 	return NSTSourceMap[nstToken]
 }
 
-// GetNSTAssetID returns nst assetID as string
+// GetNSTAssetID returns the asset ID for a given NSTToken.
 func GetNSTAssetID(nstToken NSTToken) string {
 	return NSTAssetIDMap[nstToken]
 }
 
+// IsNSTToken checks if a token name is an NSTToken.
 func IsNSTToken(tokenName string) bool {
 	if _, ok := NSTTokens[NSTToken(tokenName)]; ok {
 		return true
@@ -495,12 +511,27 @@ func IsNSTToken(tokenName string) bool {
 }
 
 type StakerInfo struct {
-	Validators []string
-	Balance    uint64
+	Address         string
+	Validators      []string
+	Balance         uint64
+	WithdrawVersion uint64
+}
+
+type WithdrawInfo struct {
+	StakerIndex     uint32
+	WithdrawVersion uint64
+}
+
+type DepositInfo struct {
+	StakerIndex uint32
+	StakerAddr  string
+	Validator   string
+	Amount      uint64
 }
 
 type StakerInfos map[uint32]*StakerInfo
 
+// NewStakerInfo creates a new StakerInfo instance.
 func NewStakerInfo() *StakerInfo {
 	return &StakerInfo{
 		Validators: make([]string, 0),
@@ -508,6 +539,22 @@ func NewStakerInfo() *StakerInfo {
 	}
 }
 
+func (s *StakerInfo) RemoveValidator(validator string, balance uint64) bool {
+	if s == nil {
+		return false
+	}
+	if !slices.Contains(s.Validators, validator) {
+		return false
+	}
+	if s.Balance < balance {
+		return false
+	}
+	s.Balance -= balance
+	s.Validators = slices.Delete(s.Validators, slices.Index(s.Validators, validator), slices.Index(s.Validators, validator)+1)
+	return true
+}
+
+// AddValidator adds a validator and its balance to the StakerInfo if not already present.
 func (s *StakerInfo) AddValidator(validator string, balance uint64) bool {
 	if s == nil {
 		return false
@@ -521,23 +568,31 @@ func (s *StakerInfo) AddValidator(validator string, balance uint64) bool {
 }
 
 type Stakers struct {
-	Locker  *sync.RWMutex
-	Version uint64
-	SInfos  StakerInfos
+	Locker          *sync.RWMutex
+	Version         uint64
+	WithdrawVersion uint64
+	SInfos          StakerInfos
+	// version -> {stakerAddr, validator, amount}
+	SInfosAdd         map[uint64]*DepositInfo // StakerInfosAdd
+	WithdrawInfos     []*WithdrawInfo         // WithdrawInfos
+	prevWithdrawInfos map[uint32]uint64
 }
 
+// GetCopy returns a deep copy of the StakerInfos map.
 func (sis StakerInfos) GetCopy() StakerInfos {
-	//	ret := make(map[uint64][]string)
 	ret := make(StakerInfos)
 	for idx, si := range sis {
 		ret[idx] = &StakerInfo{
-			Validators: si.Validators,
-			Balance:    si.Balance,
+			Address:         si.Address,
+			Validators:      si.Validators,
+			Balance:         si.Balance,
+			WithdrawVersion: si.WithdrawVersion,
 		}
 	}
 	return ret
 }
 
+// GetSVList returns a map of staker indices to their validator lists.
 func (sis *StakerInfos) GetSVList() map[uint32][]string {
 	ret := make(map[uint32][]string)
 	for idx, si := range *sis {
@@ -546,7 +601,7 @@ func (sis *StakerInfos) GetSVList() map[uint32][]string {
 	return ret
 }
 
-// Add will add the given stakerInfo of stakerIndex to the stakerInfos, if the process failed, the original StakerInfos might be changed, however this is faster than AddAllOrNone, so it suits the case when the 'allOrNone' is not important
+// Add adds a StakerInfo to the StakerInfos for a given staker index.
 func (sis *StakerInfos) Add(stakerIndex uint32, sAdd *StakerInfo) error {
 	if sis == nil {
 		return fmt.Errorf("failed to do add, stakerInfos is nil")
@@ -571,6 +626,7 @@ func (sis *StakerInfos) Add(stakerIndex uint32, sAdd *StakerInfo) error {
 	return nil
 }
 
+// Remove removes a StakerInfo from the StakerInfos for a given staker index.
 func (sis *StakerInfos) Remove(stakerIndex uint32, sRemove StakerInfo) error {
 	if sis == nil {
 		return fmt.Errorf("failed to do add, stakerInfos is nil")
@@ -605,6 +661,7 @@ func (sis *StakerInfos) Remove(stakerIndex uint32, sRemove StakerInfo) error {
 	return nil
 }
 
+// AddAllOrNone adds all StakerInfos from sAdd, or none if any would conflict.
 func (sis *StakerInfos) AddAllOrNone(sAdd StakerInfos) error {
 	if len(sAdd) == 0 {
 		return nil
@@ -641,6 +698,7 @@ func (sis *StakerInfos) AddAllOrNone(sAdd StakerInfos) error {
 	return nil
 }
 
+// RemoveAllOrNone removes all StakerInfos in sRemove, or none if any would fail.
 func (sis *StakerInfos) RemoveAllOrNone(sRemove StakerInfos) error {
 	if len(sRemove) == 0 {
 		return nil
@@ -685,6 +743,7 @@ func (sis *StakerInfos) RemoveAllOrNone(sRemove StakerInfos) error {
 	return nil
 }
 
+// Update adds and removes StakerInfos in a single operation.
 func (sis *StakerInfos) Update(sAdd, sRemove StakerInfos) error {
 	if err := sis.AddAllOrNone(sAdd); err != nil {
 		return err
@@ -695,13 +754,17 @@ func (sis *StakerInfos) Update(sAdd, sRemove StakerInfos) error {
 	return nil
 }
 
+// NewStakers creates a new Stakers instance.
 func NewStakers() *Stakers {
 	return &Stakers{
-		Locker: new(sync.RWMutex),
-		SInfos: make(StakerInfos),
+		Locker:        new(sync.RWMutex),
+		SInfos:        make(StakerInfos),
+		SInfosAdd:     make(map[uint64]*DepositInfo),
+		WithdrawInfos: make([]*WithdrawInfo, 0),
 	}
 }
 
+// Length returns the number of stakers.
 func (s *Stakers) Length() int {
 	if s == nil {
 		return 0
@@ -712,21 +775,21 @@ func (s *Stakers) Length() int {
 	return l
 }
 
-// GetStakerInfos returns the stakerInfos and version, the stakerInfos is a copy, so it can be modified
-func (s *Stakers) GetStakerInfos() (StakerInfos, uint64) {
+// GetStakerInfos returns a copy of the staker infos and the current version.
+func (s *Stakers) GetStakerInfos() (StakerInfos, uint64, uint64) {
 	s.Locker.RLock()
 	defer s.Locker.RUnlock()
-	return s.SInfos.GetCopy(), s.Version
+	return s.SInfos.GetCopy(), s.Version, s.WithdrawVersion
 }
 
-// GetStakerInfosNoCopy returns the stakerInfos and version, the stakerInfos is not a copy, so it should not be modified
-func (s *Stakers) GetStakersNoCopy() (StakerInfos, uint64) {
+// GetStakersNoCopy returns the staker infos and version without copying (should not be modified).
+func (s *Stakers) GetStakersNoCopy() (StakerInfos, uint64, uint64) {
 	s.Locker.RLock()
 	defer s.Locker.RUnlock()
-	return s.SInfos, s.Version
+	return s.SInfos, s.Version, s.WithdrawVersion
 }
 
-// SetStakerInfos set the stakerInfos and version, this method should be called when the stakerInfos is initialized or reset, it will not modify the existing stakerInfos but just replace it
+// SetStakerInfos sets the staker infos and version, replacing the current data.
 func (s *Stakers) SetStakerInfos(sInfos StakerInfos, version uint64) {
 	s.Locker.Lock()
 	s.SInfos = sInfos
@@ -734,6 +797,7 @@ func (s *Stakers) SetStakerInfos(sInfos StakerInfos, version uint64) {
 	s.Locker.Unlock()
 }
 
+// GetStakerBalances returns a map of staker indices to their balances.
 func (s *Stakers) GetStakerBalances() map[uint32]uint64 {
 	s.Locker.RLock()
 	defer s.Locker.RUnlock()
@@ -744,6 +808,58 @@ func (s *Stakers) GetStakerBalances() map[uint32]uint64 {
 	return ret
 }
 
+// func (s *Stakers) CacheDeposits(deposits map[uint64]*DepositInfo, nextVersion uint64) error {
+// CacheDeposits caches deposits for the next version, ensuring the version is continuous and not already existing.
+// NOTE: we don't make sure all-or-nothing, dirty data caused by error should be handled by caller (currently caller will eventually do reset all)
+func (s *Stakers) CacheDepositsWithdraws(deposits map[uint64]*DepositInfo, nextVersion uint64, withdraws []*WithdrawInfo) error {
+	if len(deposits) > 0 && nextVersion == 0 {
+		return fmt.Errorf("failed to cache deposits, nextVersion is 0")
+	}
+	if len(s.SInfosAdd) > 0 && (s.SInfosAdd[nextVersion-1] == nil || s.SInfosAdd[nextVersion] != nil) {
+		return fmt.Errorf("failed to cache deposits, version not continuos or already exists, nextVersion:%d, no nextVersion-1:%t", nextVersion, s.SInfosAdd[nextVersion-1] == nil)
+	}
+	if len(s.SInfosAdd) > 0 && s.Version+1 != nextVersion {
+		return fmt.Errorf("failed to cache deposits, version mismatch, current:%d, next:%d", s.Version, nextVersion)
+	}
+
+	for i := 0; i < len(deposits); i++ {
+		v := nextVersion + uint64(i)
+		deposit, exists := deposits[v]
+		if !exists {
+			return fmt.Errorf("failed to cache deposits, version not continuos, missed version:%d", nextVersion+uint64(i))
+		}
+		if s.SInfosAdd == nil {
+			s.SInfosAdd = make(map[uint64]*DepositInfo)
+		}
+		if s.SInfosAdd[v] != nil {
+			return fmt.Errorf("failed to cache deposits, version already exists, version:%d", v)
+		}
+		s.SInfosAdd[v] = &DepositInfo{
+			StakerIndex: deposit.StakerIndex,
+			StakerAddr:  deposit.StakerAddr,
+			Validator:   deposit.Validator,
+			Amount:      deposit.Amount,
+		}
+	}
+	for _, withdraw := range withdraws {
+		if withdraw.WithdrawVersion == 0 {
+			return fmt.Errorf("failed to cache withdraws, withdraw version is 0")
+		}
+		if s.WithdrawVersion >= withdraw.WithdrawVersion {
+			return fmt.Errorf("failed to cache withdraws, withdraw version already exists, current:%d, next:%d", s.WithdrawVersion, withdraw.WithdrawVersion)
+		}
+		if len(s.WithdrawInfos) > 0 && s.WithdrawInfos[len(s.WithdrawInfos)-1].WithdrawVersion+1 != withdraw.WithdrawVersion {
+			return fmt.Errorf("failed to cache withdraws, withdraw version not continuos, current:%d, next:%d", s.WithdrawInfos[len(s.WithdrawInfos)-1].WithdrawVersion, withdraw.WithdrawVersion)
+		}
+		s.WithdrawInfos = append(s.WithdrawInfos, &WithdrawInfo{
+			StakerIndex:     withdraw.StakerIndex,
+			WithdrawVersion: withdraw.WithdrawVersion,
+		})
+	}
+	return nil
+}
+
+// Update updates the staker infos by adding and removing, and sets the new version.
 func (s *Stakers) Update(sInfosAdd, sInfosRemove StakerInfos, nextVersion, latestVersion uint64) error {
 	s.Locker.Lock()
 	defer s.Locker.Unlock()
@@ -757,30 +873,204 @@ func (s *Stakers) Update(sInfosAdd, sInfosRemove StakerInfos, nextVersion, lates
 	return nil
 }
 
-func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST) error {
-	s.Locker.Lock()
-	defer s.Locker.Unlock()
-	if s.Version != changes.Version {
-		return fmt.Errorf("version mismatch, current:%d, next:%d", s.Version, changes.Version)
+// tryGrowVersionsFromCache tries to grow the staker infos from the cache to a specific version: apply appending deposits to input_version
+func (s *Stakers) tryGrowVersionsFromCache(version, withdrawVersion uint64, update bool) error {
+	if version < s.Version || withdrawVersion < s.WithdrawVersion {
+		return fmt.Errorf("grow to a history version, current:%d, next:%d", s.Version, version)
 	}
-	for _, change := range changes.NstBalanceChanges {
-		sInfo, exists := s.SInfos[uint32(change.StakerIndex)]
-		if !exists {
-			return fmt.Errorf("stakerIndex not found, staker-index:%d", change.StakerIndex)
+
+	if version == s.Version && withdrawVersion == s.WithdrawVersion {
+		if update {
+			return fmt.Errorf("grow to a history version by deposit, current f:%d, fw:%d next f%d, fw:%d", s.Version, s.WithdrawVersion, version, withdrawVersion)
+		} else {
+			return nil
 		}
-		sInfo.Balance = change.Balance
 	}
-	s.Version++
+
+	if len(s.SInfosAdd) == 0 && version > s.Version {
+		// TODO: do withdrawVersion
+		return fmt.Errorf("failed to grow version, stakerInfosAdd is nil")
+	}
+
+	if len(s.WithdrawInfos) == 0 && withdrawVersion > s.WithdrawVersion {
+		return fmt.Errorf("failed to grow version, withdrawInfos is empty, current:%d, next:%d", s.WithdrawVersion, withdrawVersion)
+	}
+
+	// feedVersion will at least grow by 2 or not grow at all
+	// grow the version to the next version
+	var err error
+	i := s.Version + 1
+	latestWithdrawVersion := s.WithdrawVersion
+	defer func() {
+		if err != nil {
+			if i > 1 || latestWithdrawVersion > s.WithdrawVersion {
+				s.downgradeVersion(i-1, latestWithdrawVersion)
+			}
+		}
+	}()
+	// handle deposits applying
+	if version > s.Version {
+		for ; i <= version; i++ {
+			// grow the version
+			deposit := s.SInfosAdd[i]
+			if deposit == nil {
+				err = fmt.Errorf("failed to grow version, stakerInfosAdd for version %d is nil", i)
+				return err
+			}
+			sInfo, exists := s.SInfos[uint32(deposit.StakerIndex)]
+			if !exists {
+				if int(deposit.StakerIndex) != len(s.SInfos) {
+					err = fmt.Errorf("failed to grow version, stakerIndex is not continuous, new staker-index:%d, current max-index:%d", deposit.StakerIndex, len(s.SInfos))
+					return err
+				}
+				s.SInfos[uint32(deposit.StakerIndex)] = &StakerInfo{
+					Address:    deposit.StakerAddr,
+					Validators: []string{deposit.Validator},
+					Balance:    deposit.Amount,
+				}
+			} else if !sInfo.AddValidator(deposit.Validator, deposit.Amount) {
+				err = fmt.Errorf("failed to grow version, validatorIndex already exists, staker-index:%d, validator:%s", deposit.StakerIndex, deposit.Validator)
+				return err
+			}
+		}
+	}
+	// handle withdraws applying
+	if withdrawVersion > s.WithdrawVersion {
+		if s.WithdrawInfos[len(s.WithdrawInfos)-1].WithdrawVersion < withdrawVersion {
+			return fmt.Errorf("failed to grow version, withdrawInfos is not continuous, current:%d, next:%d", s.WithdrawVersion, withdrawVersion)
+		}
+		s.prevWithdrawInfos = make(map[uint32]uint64)
+		for _, withdraw := range s.WithdrawInfos {
+			if withdraw.WithdrawVersion > withdrawVersion {
+				// we have reached the target withdraw version
+				break
+			}
+			sInfo, exists := s.SInfos[withdraw.StakerIndex]
+			if !exists {
+				err = fmt.Errorf("failed to grow version, stakerIndex not found in stakerInfos, staker-index:%d", withdraw.StakerIndex)
+				return err
+			}
+			latestWithdrawVersion = withdraw.WithdrawVersion
+			// for same staker index, it could be changed multiple times, we only need to keep the original withdraw version
+			if _, exist := s.prevWithdrawInfos[withdraw.StakerIndex]; !exist {
+				s.prevWithdrawInfos[withdraw.StakerIndex] = sInfo.WithdrawVersion
+			}
+			sInfo.WithdrawVersion = withdraw.WithdrawVersion
+		}
+	}
 	return nil
 }
 
-func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version uint64, all bool) error {
+// GrowVersionsFromCacheByDeposit grows the staker infos from the cache to a specific version.
+func (s *Stakers) GrowVersionsFromCacheByDepositWithdraw(version, withdrawVersion uint64) error {
+	if version < 1 {
+		return fmt.Errorf("version is less than 1, version:%d", version)
+	}
 	s.Locker.Lock()
 	defer s.Locker.Unlock()
-	if !all && s.Version+1 != version {
-		return fmt.Errorf("version mismatch, current:%d, next:%d", s.Version, version)
+
+	if err := s.tryGrowVersionsFromCache(version, withdrawVersion, true); err != nil {
+		return err
+	}
+	s.complete(version, withdrawVersion)
+	s.Version = version
+	s.WithdrawVersion = withdrawVersion
+	return nil
+}
+
+func (s *Stakers) complete(version, withdrawVersion uint64) {
+	for v := range s.SInfosAdd {
+		if v <= version {
+			delete(s.SInfosAdd, v)
+		}
+	}
+	idx := 0
+	for ; idx < len(s.WithdrawInfos); idx++ {
+		if s.WithdrawInfos[idx].WithdrawVersion > withdrawVersion {
+			break
+		}
+	}
+	s.WithdrawInfos = s.WithdrawInfos[idx:]
+	s.prevWithdrawInfos = make(map[uint32]uint64)
+}
+
+func (s *Stakers) downgradeVersion(version, _ uint64) {
+	for i := version; i > s.Version; i-- {
+		deposit := s.SInfosAdd[i]
+		sInfo := s.SInfos[uint32(deposit.StakerIndex)]
+		sInfo.RemoveValidator(deposit.Validator, deposit.Amount)
+		s.Version--
+	}
+	for sIndex, sVersion := range s.prevWithdrawInfos {
+		sInfo, exists := s.SInfos[sIndex]
+		if !exists {
+			continue
+		}
+		sInfo.WithdrawVersion = sVersion
+	}
+	s.prevWithdrawInfos = make(map[uint32]uint64)
+}
+
+// ApplyBalanceChanges applies balance changes from RawDataNST to the staker infos.
+func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version uint64, withdrawVersion uint64) (err error) {
+	s.Locker.Lock()
+	defer s.Locker.Unlock()
+	// Check version match before applying changes
+	if s.Version != changes.Version {
+		return fmt.Errorf("version mismatch, current:%d, next:%d", s.Version, changes.Version)
+	}
+	// append cached validators from deposit
+	if err = s.tryGrowVersionsFromCache(version, withdrawVersion, false); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			if version > 1 || withdrawVersion > s.WithdrawVersion {
+				s.downgradeVersion(version, withdrawVersion)
+			}
+		} else {
+			s.complete(version, withdrawVersion)
+		}
+	}()
+	// Prepare to track stakers to remove and those to update
+	updated := make(map[uint32]*StakerInfo)
+	for _, change := range changes.NstBalanceChanges {
+		sInfo, exists := s.SInfos[uint32(change.StakerIndex)]
+		if !exists {
+			err = fmt.Errorf("stakerIndex not found, staker-index:%d", change.StakerIndex)
+			return err
+		}
+		// staker info has been grown to the latest withdraw version, so we can campare here to decide whether to update
+		if sInfo.WithdrawVersion > s.WithdrawVersion {
+			// skip update
+			continue
+		}
+		// Prepare an updated copy of the staker info with the new balance
+		tmp := *sInfo // shallow copy is safe since Validators is not changed
+		tmp.Balance = change.Balance
+		updated[uint32(change.StakerIndex)] = &tmp
+	}
+
+	// Apply all balance updates
+	for sIdx, sInfo := range updated {
+		s.SInfos[sIdx] = sInfo
+	}
+	// Increment the version after successful application
+	s.Version = version
+	s.WithdrawVersion = withdrawVersion
+	return nil
+}
+
+// Reset resets the staker infos to the provided list and version.
+func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version *oracletypes.NSTVersion, all bool) error {
+	s.Locker.Lock()
+	defer s.Locker.Unlock()
+	if !all && s.Version+1 != version.FeedVersion.Version {
+		return fmt.Errorf("version mismatch, current:%d, next:%d", s.Version, version.FeedVersion.Version)
 	}
 	tmp := make(StakerInfos)
+	deposits := make(map[uint64]*DepositInfo)
+	withdraws := make([]*WithdrawInfo, 0, len(sInfos))
 	seenStakerIdx := make(map[uint64]struct{})
 	for _, sInfo := range sInfos {
 		if _, ok := seenStakerIdx[uint64(sInfo.StakerIndex)]; ok {
@@ -788,37 +1078,76 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version uint64, all bo
 		}
 		seenStakerIdx[uint64(sInfo.StakerIndex)] = struct{}{}
 
-		// we don't limit the staker size here, it's guaranteed by imuachain, and the size might not be equal to the biggest index
-		validators := make([]string, 0, len(sInfo.ValidatorPubkeyList))
+		// we don't limit the staker size here, it's guaranteed by imuachain
+		validators := make([]string, 0, len(sInfo.ValidatorList))
 		seenValidatorIdx := make(map[string]struct{})
-		for _, validator := range sInfo.ValidatorPubkeyList {
-			if _, ok := seenValidatorIdx[validator]; ok {
+		pendingDepositAmount := uint64(0)
+		for _, validator := range sInfo.ValidatorList {
+			if _, ok := seenValidatorIdx[validator.ValidatorPubkey]; ok {
 				return fmt.Errorf("duplicated validatorIndex, validator-index-hex:%s", validator)
 			}
-			validators = append(validators, validator)
-			seenValidatorIdx[validator] = struct{}{}
+			if validator.Version <= version.FeedVersion.Version {
+				validators = append(validators, validator.ValidatorPubkey)
+			} else {
+				deposits[validator.Version] = &DepositInfo{
+					StakerIndex: sInfo.StakerIndex,
+					StakerAddr:  sInfo.StakerAddr,
+					Validator:   validator.ValidatorPubkey,
+					Amount:      validator.DepositAmount,
+				}
+				pendingDepositAmount += validator.DepositAmount
+			}
+			seenValidatorIdx[validator.ValidatorPubkey] = struct{}{}
 		}
 		balance := uint64(0)
 		l := len(sInfo.BalanceList)
 		if l > 0 && sInfo.BalanceList[l-1] != nil && sInfo.BalanceList[l-1].Balance > 0 {
 			balance = uint64(sInfo.BalanceList[l-1].Balance)
 		}
-		tmp[uint32(sInfo.StakerIndex)] = &StakerInfo{
-			Validators: validators,
-			Balance:    balance,
+		if balance < pendingDepositAmount {
+			return fmt.Errorf("balance is less than pending deposit amount, staker-index:%d, balance:%d, pending-deposit-amount:%d", sInfo.StakerIndex, balance, pendingDepositAmount)
+		}
+		if len(validators) > 0 {
+			// so we actully might include withdrawVersion > feedWithdrawVersion as 'current snapshot' info, but it's fine for withdraw
+			tmp[uint32(sInfo.StakerIndex)] = &StakerInfo{
+				Address:         sInfo.StakerAddr,
+				Validators:      validators,
+				Balance:         balance - pendingDepositAmount,
+				WithdrawVersion: sInfo.WithdrawVersion,
+			}
+		}
+		// we might duplicated withdrawVersion, but it's fine to apply again with the same withdrawVersion when we do growVersion later
+		if sInfo.WithdrawVersion > version.FeedWithdrawVersion {
+			withdraws = append(withdraws, &WithdrawInfo{
+				StakerIndex:     sInfo.StakerIndex,
+				WithdrawVersion: sInfo.WithdrawVersion,
+			})
 		}
 	}
+	// sort withdraws by WithdrawVersion
+	sort.Slice(withdraws, func(i, j int) bool {
+		return withdraws[i].WithdrawVersion < withdraws[j].WithdrawVersion
+	})
 	if all {
 		s.SInfos = tmp
+		s.SInfosAdd = deposits
+		s.WithdrawInfos = withdraws
 	} else {
 		for k, v := range tmp {
 			s.SInfos[k] = v
 		}
+		for k, v := range deposits {
+			s.SInfosAdd[k] = v
+		}
+		// append withdraws
+		s.WithdrawInfos = append(s.WithdrawInfos, s.WithdrawInfos...)
 	}
-	s.Version = version
+	s.Version = version.FeedVersion.Version
+	s.WithdrawVersion = version.FeedWithdrawVersion
 	return nil
 }
 
+// ConvertHexToIntStr converts a hex string to its integer string representation.
 func ConvertHexToIntStr(hexStr string) (string, error) {
 	vBytes, err := hexutil.Decode(hexStr)
 	if err != nil {
@@ -827,6 +1156,30 @@ func ConvertHexToIntStr(hexStr string) (string, error) {
 	return new(big.Int).SetBytes(vBytes).String(), nil
 }
 
+// ConvertBytesToIntStr converts a byte string to its integer string representation.
 func ConvertBytesToIntStr(bytesStr string) string {
 	return new(big.Int).SetBytes([]byte(bytesStr)).String()
+}
+
+func IsContractAddress(addr string, client *ethclient.Client, logger feedertypes.LoggerInf) bool {
+	if len(addr) == 0 {
+		logger.Error("contract address is empty")
+		return false
+	}
+
+	// Ensure it is an Ethereum address: 0x followed by 40 hexadecimal characters.
+	re := regexp.MustCompile("^0x[0-9a-fA-F]{40}$")
+	if !re.MatchString(addr) {
+		logger.Error(" contract address is not valid", "address", addr)
+		return false
+	}
+
+	// Ensure it is a contract address.
+	address := common.HexToAddress(addr)
+	bytecode, err := client.CodeAt(context.Background(), address, nil)
+	if err != nil {
+		logger.Error("failed to get code at contract address", "address", address, "error", err)
+		return false
+	}
+	return len(bytecode) > 0
 }

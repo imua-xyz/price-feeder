@@ -13,11 +13,13 @@ import (
 )
 
 type ResultValidators struct {
+	Code int `json:"code"`
 	Data []struct {
 		Index     string `json:"index"`
 		Validator struct {
-			Pubkey           string `json:"pubkey"`
-			EffectiveBalance string `json:"effective_balance"`
+			Pubkey            string `json:"pubkey"`
+			EffectiveBalance  string `json:"effective_balance"`
+			WithdrawableEpoch string `json:"withdrawable_epoch"`
 		} `json:"validator"`
 	} `json:"data"`
 }
@@ -38,7 +40,8 @@ type ValidatorPostRequest struct {
 }
 
 const (
-	divisor = 1000000000
+	// the response from beaconchain represents ETH with 10^9 decimals
+	divisor = 1
 
 	urlQueryHeader          = "eth/v1/beacon/headers"
 	urlQueryHeaderFinalized = "eth/v1/beacon/headers/finalized"
@@ -60,8 +63,9 @@ var (
 	//	defaultStakers          = newStakers()
 
 	// latest finalized epoch we've got balances summarized for stakers
-	finalizedEpoch   uint64
-	finalizedVersion uint64
+	finalizedEpoch           uint64
+	finalizedVersion         uint64
+	finalizedWithdrawVersion uint64
 
 	latestChangesBytes = types.NSTZeroChanges
 
@@ -74,7 +78,7 @@ func (s *source) reload(token, cfgPath string) error {
 	return nil
 }
 
-func getValidators(validators []string, stateRoot string) ([][]uint64, error) {
+func getValidators(validators []string, stateRoot string, epoch uint64) ([][]uint64, error) {
 	reqBody := ValidatorPostRequest{
 		IDs: validators,
 	}
@@ -95,10 +99,14 @@ func getValidators(validators []string, stateRoot string) ([][]uint64, error) {
 		logger.Error("failed to parse GetValidators response", "error", err)
 		return nil, err
 	}
+	if re.Code != 0 {
+		logger.Error("GetValidators response code is not 0", "code", re.Code, "response", string(result))
+		return nil, fmt.Errorf("GetValidators response code is not 0: %d", re.Code)
+	}
 	ret := make([][]uint64, 0, len(re.Data))
 	for _, value := range re.Data {
-		index, _ := strconv.ParseUint(value.Index, 10, 64)
 		efb, _ := strconv.ParseUint(value.Validator.EffectiveBalance, 10, 64)
+		index, _ := strconv.ParseUint(value.Index, 10, 64)
 		ret = append(ret, []uint64{index, efb / divisor})
 	}
 	return ret, nil
@@ -133,4 +141,45 @@ func getFinalizedEpoch() (epoch uint64, stateRoot string, err error) {
 	}
 	stateRoot = re.Data.Header.Message.StateRoot
 	return
+}
+
+// Struct for parsing finalized block with execution payload
+// See: https://ethereum.github.io/beacon-APIs/#/Beacon/getBlockV2
+// and https://rpc.ankr.com/premium-http/eth_beacon
+
+type ResultFinalizedBlock struct {
+	Data struct {
+		Message struct {
+			Slot      string `json:"slot"`
+			StateRoot string `json:"state_root"`
+			Body      struct {
+				ExecutionPayload struct {
+					BlockNumber string `json:"block_number"`
+				} `json:"execution_payload"`
+			} `json:"body"`
+			Header struct {
+				StateRoot string `json:"state_root"`
+			} `json:"header"`
+		} `json:"message"`
+	} `json:"data"`
+}
+
+// Returns (elBlockNumber, clSlot, stateRoot, error)
+func getFinalizedELBlockNumber() (int64, uint64, string, error) {
+	u := urlEndpoint.JoinPath("eth/v2/beacon/blocks/finalized")
+	res, err := http.Get(u.String())
+	if err != nil {
+		return 0, 0, "", err
+	}
+	defer res.Body.Close()
+	result, _ := io.ReadAll(res.Body)
+	var re ResultFinalizedBlock
+	if err = json.Unmarshal(result, &re); err != nil {
+		return 0, 0, "", err
+	}
+	clSlot, _ := strconv.ParseUint(re.Data.Message.Slot, 10, 64)
+	elBlockNumber, _ := strconv.ParseInt(re.Data.Message.Body.ExecutionPayload.BlockNumber, 10, 64)
+	// stateRoot := re.Data.Message.Header.StateRoot
+	stateRoot := re.Data.Message.StateRoot
+	return elBlockNumber, clSlot, stateRoot, nil
 }

@@ -24,8 +24,12 @@ func (ec imuaClient) SendTx(feederID, baseBlock uint64, price fetchertypes.Price
 	if err != nil {
 		return nil, err
 	}
+	tc, err := ec.GetTxClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tx client, msg:%v, valConsAddr:%s, error:%w", msg, sdk.ConsAddress(ec.pubKey.Address()), err)
+	}
 	// broadcast txBytes
-	res, err := ec.txClient.BroadcastTx(
+	res, err := tc.BroadcastTx(
 		context.Background(),
 		&sdktx.BroadcastTxRequest{
 			Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC,
@@ -43,7 +47,11 @@ func (ec imuaClient) SendTx2Phases(feederID, baseBlock uint64, prices []*fetcher
 	if err != nil {
 		return nil, err
 	}
-	res, err := ec.txClient.BroadcastTx(
+	tc, err := ec.GetTxClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tx client, msg:%v, valConsAddr:%s, error:%w", msg, sdk.ConsAddress(ec.pubKey.Address()), err)
+	}
+	res, err := tc.BroadcastTx(
 		context.Background(),
 		&sdktx.BroadcastTxRequest{
 			Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC,
@@ -91,7 +99,6 @@ func (ec imuaClient) signMsg(msgs ...sdk.Msg) (authsigning.Tx, error) {
 		ec.logger.Error("failed to sign txBytes", "error", err)
 		return nil, err
 	}
-	// _ = txBuilder.SetSignatures(getSignature(sigBytes, ec.pubKey, signMode))
 	_ = txBuilder.SetSignatures(ec.getSignature(sigBytes))
 	return txBuilder.GetTx(), nil
 }
@@ -195,8 +202,7 @@ func (ec imuaClient) getSignedTxBytes2Phases(feederID, baseBlock uint64, prices 
 	}
 	for _, price := range prices {
 		pss[0].Prices = append(pss[0].Prices, &oracletypes.PriceTimeDetID{
-			Price: price.Price,
-			//			Decimal:   price.Decimal,
+			Price:     price.Price,
 			Timestamp: time.Now().UTC().Format(feedertypes.TimeLayout),
 			DetID:     price.RoundID,
 		})

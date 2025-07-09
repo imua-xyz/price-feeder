@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/imua-xyz/price-feeder/fetcher/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
@@ -36,11 +37,17 @@ type source struct {
 	logger  feedertypes.LoggerInf
 	stakers *fetchertypes.Stakers
 	*types.Source
+	ethClient        *ethclient.Client
+	bootstrapAddress string // the address of the bootstrap contract, used to get capsule address for stakers
 }
 
 type config struct {
-	URL   string `yaml:"url"`
-	NSTID string `yaml:"nstid"`
+	URLs struct {
+		Beaconchain string `yaml:"beaconchain"`
+		ETH         string `yaml:"eth"`
+	} `yaml:"urls"`
+	NSTID     string `yaml:"nstid"`
+	Bootstrap string `yaml:"bootstrap"` // the address of the bootstrap contract, used to get capsule address for stakers
 }
 
 type ResultConfig struct {
@@ -49,10 +56,11 @@ type ResultConfig struct {
 	} `json:"data"`
 }
 
-func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version uint64) {
+func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version uint64, withdrawVersion uint64) {
 	s.stakers.Locker.Lock()
 	s.stakers.SInfos = sInfos
 	s.stakers.Version = version
+	s.stakers.WithdrawVersion = withdrawVersion
 	s.stakers.Locker.Unlock()
 }
 
@@ -84,9 +92,9 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse config, error:%v", err))
 	}
 	// beaconchain endpoint url
-	urlEndpoint, err = url.Parse(cfg.URL)
+	urlEndpoint, err = url.Parse(cfg.URLs.Beaconchain)
 	if err != nil {
-		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse url:%s, error:%v", cfg.URL, err))
+		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse url:%s, error:%v", cfg.URLs.Beaconchain, err))
 	}
 
 	// parse nstID by splitting it with "_'"
@@ -123,12 +131,26 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 		}
 	}
 
+	client, err := ethclient.Dial(cfg.URLs.ETH)
+	if err != nil {
+		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to connect to Ethereum node: %v", err))
+	}
+
+	if cfg.Bootstrap == "" {
+		return nil, feedertypes.ErrInitFail.Wrap("bootstrap address is not set")
+	}
+	if !types.IsContractAddress(cfg.Bootstrap, client, logger) {
+		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("bootstrap address is not a contract address: %s", cfg.Bootstrap))
+	}
 	// init first to get a fixed pointer for 'fetch' to refer to
 	defaultSource = &source{}
+
 	*defaultSource = source{
-		logger:  logger,
-		Source:  types.NewSource(logger, types.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
-		stakers: types.NewStakers(),
+		logger:           logger,
+		Source:           types.NewSource(logger, types.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
+		stakers:          types.NewStakers(),
+		ethClient:        client,
+		bootstrapAddress: cfg.Bootstrap,
 	}
 
 	// update nst assetID to be consistent with imuad. for beaconchain it's about different lzID
