@@ -16,6 +16,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/cosmos/go-bip39"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/evmos/evmos/v16/encoding"
 	"github.com/imua-xyz/imuachain/app"
 	cmdcfg "github.com/imua-xyz/imuachain/cmd/config"
@@ -29,8 +30,8 @@ type ImuaClientInf interface {
 	// Query
 	GetParams() (*oracletypes.Params, error)
 	GetLatestPrice(tokenID uint64) (oracletypes.PriceTimeRound, error)
-	GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, int64, error)
-	GetStakerInfo(assetID, stakerAddr string) ([]*oracleTypes.StakerInfo, int64, error)
+	GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, *oracleTypes.NSTVersion, error)
+	// GetStakerInfo(assetID, stakerAddr string) ([]*oracleTypes.StakerInfo, int64, error)
 
 	// Tx
 	SendTx(feederID uint64, baseBlock uint64, price fetchertypes.PriceInfo, nonce int32) (*sdktx.BroadcastTxResponse, error)
@@ -43,11 +44,20 @@ type EventInf interface {
 	Type() EventType
 }
 
+type FeedVersion struct {
+	Version         uint64
+	WithdrawVersion uint64
+}
+
 type EventNewBlock struct {
 	height       int64
 	gas          string
 	paramsUpdate bool
+	nstStakers   EventNSTStakers
+	nstBalances  EventNSTBalances
 	feederIDs    map[int64]struct{}
+	// nstFeedVersions map[uint64]uint64
+	nstFeedVersions map[uint64]*FeedVersion
 }
 
 func (s *SubscribeResult) GetEventNewBlock() (*EventNewBlock, error) {
@@ -64,25 +74,94 @@ func (s *SubscribeResult) GetEventNewBlock() (*EventNewBlock, error) {
 		return nil, errors.New("failed to get feederIDs from event_newBlock response")
 	}
 
-	return &EventNewBlock{
+	ret := &EventNewBlock{
 		height:       height,
 		gas:          fee,
 		paramsUpdate: s.ParamsUpdate(),
 		feederIDs:    feederIDs,
-	}, nil
+	}
+
+	if len(s.Result.Events.NSTStakersChange) > 0 {
+		eNSTStakers, err := s.getEventNSTStakers()
+		if err != nil {
+			return nil, err
+		}
+		ret.nstStakers = eNSTStakers
+	}
+
+	if len(s.Result.Events.NSTFeedVersion) > 0 {
+		feedVersions, err := s.GetFeedVersions()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse feedVersion from event_newBlock response, error:%w", err)
+		}
+		ret.nstFeedVersions = feedVersions
+	}
+
+	if len(s.Result.Events.NSTBalanceChange) > 0 {
+		nstBalances, err := s.getEventNSTBalances()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse nstBalanceChange from event_newBlock response, error:%w", err)
+		}
+		ret.nstBalances = nstBalances
+	}
+	return ret, nil
 }
+
 func (e *EventNewBlock) Height() int64 {
 	return e.height
 }
+
 func (e *EventNewBlock) Gas() string {
 	return e.gas
 }
+
 func (e *EventNewBlock) ParamsUpdate() bool {
 	return e.paramsUpdate
 }
+
+func (e *EventNewBlock) NSTStakersUpdate() bool {
+	return len(e.nstStakers) > 0
+}
+
+func (e *EventNewBlock) NSTBalancesUpdate() bool {
+	return len(e.nstBalances) > 0
+}
+
+func (e *EventNewBlock) NSTFeedVersionsUpdate() bool {
+	return len(e.nstFeedVersions) > 0
+}
+
+func (e *EventNewBlock) NSTFeedVersions() map[uint64]*FeedVersion {
+	return e.nstFeedVersions
+}
+
+func (e *EventNewBlock) ConvertNSTBalanceChangesFromFeedVersions() EventNSTBalances {
+	if len(e.nstFeedVersions) == 0 {
+		return nil
+	}
+	ret := make(EventNSTBalances)
+	for feederID, version := range e.nstFeedVersions {
+		ret[feederID] = &EventNSTBalance{
+			rootHash:        fetchertypes.EmptyRawDataChangesRootHash[:],
+			version:         version.Version,
+			withdrawVersion: version.WithdrawVersion,
+		}
+	}
+	return ret
+}
+
+func (e *EventNewBlock) NSTStakers() EventNSTStakers {
+	return e.nstStakers
+}
+
+func (e *EventNewBlock) NSTBalances() EventNSTBalances {
+	return e.nstBalances
+}
+
 func (e *EventNewBlock) FeederIDs() map[int64]struct{} {
 	return e.feederIDs
 }
+
 func (e *EventNewBlock) Type() EventType {
 	return ENewBlock
 }
@@ -129,93 +208,242 @@ func (s *SubscribeResult) GetEventUpdatePrice() (*EventUpdatePrice, error) {
 func (e *EventUpdatePrice) Prices() []*FinalPrice {
 	return e.prices
 }
+
 func (e *EventUpdatePrice) TxHeight() int64 {
 	return e.txHeight
 }
+
 func (e *EventUpdatePrice) Type() EventType {
 	return EUpdatePrice
 }
 
-type EventUpdateNSTs []*EventUpdateNST
+type EventNSTBalances map[uint64]*EventNSTBalance
 
-func (e EventUpdateNSTs) Parse() (add, remove map[int64][]string, firstVersion, latestVersion int64) {
-	add = make(map[int64][]string)
-	remove = make(map[int64][]string)
-	for _, nst := range e {
-		if nst.deposit {
-			add[nst.stakerID] = append(add[nst.stakerID], nst.validatorIndex)
-		} else {
-			remove[nst.stakerID] = append(remove[nst.stakerID], nst.validatorIndex)
-		}
-		if firstVersion == 0 || nst.version < firstVersion {
-			firstVersion = nst.version
-		}
-		if nst.version > latestVersion {
-			latestVersion = nst.version
-		}
-	}
-	return
+type EventNSTBalance struct {
+	rootHash        []byte
+	version         uint64
+	withdrawVersion uint64
 }
 
-// EventUpdateNST tells the detail about the beaconchain-validator change for a staker
-type EventUpdateNST struct {
-	deposit        bool
-	stakerID       int64
-	validatorIndex string
-	version        int64
+func (e *EventNSTBalance) RootHash() []byte {
+	return e.rootHash
 }
 
-func (s *SubscribeResult) GetEventUpdateNST() (EventUpdateNSTs, error) {
-	nstChanges, ok := s.NSTChanges()
-	if !ok {
-		return nil, errors.New("failed to get NativeTokenChange from event_txUpdateNST response")
+func (e *EventNSTBalance) Versions() (uint64, uint64) {
+	return e.version, e.withdrawVersion
+}
+
+func (e EventNSTBalances) Type() EventType {
+	return ENSTBalances
+}
+
+func (s *SubscribeResult) getEventNSTBalances() (EventNSTBalances, error) {
+	if len(s.Result.Events.NSTBalanceChange) < 1 {
+		return nil, errors.New("failed to get nstBalanceChange from event_txUpdaetNSTBalance response")
 	}
-	ret := make([]*EventUpdateNST, 0, len(nstChanges))
-	for _, nstChange := range nstChanges {
-		parsed := strings.Split(nstChange, "_")
-		if len(parsed) != 4 {
-			return nil, fmt.Errorf("failed to parse nstChange: expected 4 parts but got %d, nstChange: %s", len(parsed), nstChange)
+	ret := make(EventNSTBalances)
+
+	for _, nstBC := range s.Result.Events.NSTBalanceChange {
+		tmp := strings.Split(nstBC, delimiterItems)
+		if len(tmp) != 4 {
+			return nil, errors.New("failed to parse nstBalanceChange from event_txUpdateNSTBalance response, expected 3 parts")
 		}
-		deposit := parsed[0] == "deposit"
-		stakerID, err := strconv.ParseInt(parsed[1], 10, 64)
+		feederID, err := strconv.ParseUint(tmp[2], 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse stakerID in nstChange from evetn_txUpdateNST response, error:%w", err)
+			return nil, fmt.Errorf("failed to parse feederID from nstBalanceChange in event_txUpdateNSTBalance response, error:%w", err)
 		}
-		// TODO: group stakers to support more than 256 stakers
-		if stakerID > 256 {
-			return nil, fmt.Errorf("stakerID is too large, limit id 256, got:%d", stakerID)
-		}
-		index, err := strconv.ParseInt(parsed[3], 10, 64)
+		version, err := strconv.ParseUint(tmp[1], 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse beaconchain_sync_index in nstChange from event_txUpdateNST response, error:%w", err)
+			return nil, fmt.Errorf("failed to parse version from nstBalanceChange in event_txUpdateNSTBalance response, feederID:%d, error:%w", feederID, err)
 		}
-		ret = append(ret, &EventUpdateNST{
-			deposit:        deposit,
-			stakerID:       stakerID,
-			validatorIndex: parsed[2],
-			version:        index,
-		})
+		withdrawVersion, err := strconv.ParseUint(tmp[3], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse withdrawVersion from nstBalanceChange in event_txUpdateNSTBalance response, feederID:%d, error:%w", feederID, err)
+		}
+
+		rootHash, err := base64.StdEncoding.DecodeString(tmp[0])
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse rootHash from nstBalanceChange in event_txUpdateNSTBalance response, feederID:%d, error:%w", feederID, err)
+		}
+		ret[feederID] = &EventNSTBalance{
+			rootHash:        rootHash,
+			version:         version,
+			withdrawVersion: withdrawVersion,
+		}
 	}
 	return ret, nil
 }
 
-func (e *EventUpdateNST) Deposit() bool {
-	return e.deposit
+type EventNSTPieces map[uint64]uint32
+
+func (e EventNSTPieces) Type() EventType {
+	return ENSTPiece
 }
 
-func (e *EventUpdateNST) StakerID() int64 {
-	return e.stakerID
-}
-func (e *EventUpdateNST) ValidatorIndex() string {
-	return e.validatorIndex
+func (s *SubscribeResult) GetEventNSTPiece() (EventNSTPieces, error) {
+	if len(s.Result.Events.NSTPieceChange) < 1 {
+		return nil, errors.New("failed to get RawDataPieceChange from event_txRawDataPiece response")
+	}
+	ret := make(EventNSTPieces)
+	for _, rawDataPiece := range s.Result.Events.NSTPieceChange {
+		tmp := strings.Split(rawDataPiece, "_")
+
+		pieceIndex, err := strconv.ParseUint(tmp[1], 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse pieceIndex from event_txRawDataPiece response, error:%w", err)
+		}
+		feederID, err := strconv.ParseUint(tmp[0], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse feederID from event_txRawDataPiece response, error:%w", err)
+		}
+		ret[feederID] = uint32(pieceIndex)
+	}
+	return ret, nil
 }
 
-func (e *EventUpdateNST) Version() int64 {
-	return e.version
+type EventNSTStakers map[uint64]*EventNSTStaker
+
+type EventNSTStaker struct {
+	withdraws                  []*fetchertypes.WithdrawInfo
+	deposits                   map[uint64]*fetchertypes.DepositInfo
+	nextVersion, latestVersion uint64
 }
 
-func (e EventUpdateNSTs) Type() EventType {
-	return EUpdateNST
+func (e *EventNSTStaker) Deposits() map[uint64]*fetchertypes.DepositInfo {
+	if e == nil {
+		return nil
+	}
+	return e.deposits
+}
+
+func (e *EventNSTStaker) Withdraws() []*fetchertypes.WithdrawInfo {
+	if e == nil {
+		return nil
+	}
+	return e.withdraws
+}
+
+func (e *EventNSTStaker) Versions() (uint64, uint64) {
+	if e == nil {
+		return 0, 0
+	}
+	return e.nextVersion, e.latestVersion
+}
+
+// func (s *SubscribeResult) GetFeedVersions() (map[uint64]uint64, error) {
+func (s *SubscribeResult) GetFeedVersions() (map[uint64]*FeedVersion, error) {
+	if len(s.Result.Events.NSTFeedVersion) < 1 {
+		return nil, errors.New("failed to get feedVersion from event_newBlock response")
+	}
+	ret := make(map[uint64]*FeedVersion)
+	for _, feedVersion := range s.Result.Events.NSTFeedVersion {
+		tmp := strings.Split(feedVersion, "_")
+		if len(tmp) != 3 {
+			return nil, errors.New("failed to parse feedVersion from event_newBlock response, expected 2 parts")
+		}
+		feederID, err := strconv.ParseUint(tmp[0], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse feederID from feedVersion in event_newBlock response, error:%w", err)
+		}
+		version, err := strconv.ParseUint(tmp[1], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse version from feedVersion in event_newBlock response, error:%w", err)
+		}
+		withdrawVersion, err := strconv.ParseUint(tmp[2], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse version from feedVersion in event_newBlock response, error:%w", err)
+		}
+
+		ret[feederID] = &FeedVersion{
+			Version:         version,
+			WithdrawVersion: withdrawVersion,
+		}
+	}
+	return ret, nil
+}
+
+func (s *SubscribeResult) getEventNSTStakers() (EventNSTStakers, error) {
+	if len(s.Result.Events.NSTStakersChange) == 0 {
+		return nil, errors.New("failed to get NativeTokenChange from event_txUpdateNST response")
+	}
+
+	tmp := s.Result.Events.NSTStakersChange[0]
+
+	// Add format validation
+	if !strings.Contains(tmp, delimiterItems) {
+		return nil, fmt.Errorf("invalid format: expected pipe-delimited format, got: %s", tmp)
+	}
+
+	nstChanges := strings.Split(tmp, delimiterItems)
+
+	ret := make(EventNSTStakers)
+
+	for _, nstChange := range nstChanges {
+		parsed := strings.Split(nstChange, delimiterFields)
+		if len(parsed) != 7 {
+			return nil, fmt.Errorf("failed to parse nstChange: expected 7 parts but got %d, nstChange: %s", len(parsed), nstChange)
+		}
+		if parsed[0] != "deposit" {
+			return nil, fmt.Errorf("failed to parse nstChange: expected 'deposit' but got %s", parsed[0])
+		}
+		tmpIndex, err := strconv.ParseInt(parsed[1], 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse stakerID in nstChange from evetn_txUpdateNST response, error:%w", err)
+		}
+		stakerIndex := uint32(tmpIndex)
+
+		feederID, err := strconv.ParseUint(parsed[6], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse feederID in nstChange from event_txUpdateNST response, error:%w", err)
+		}
+
+		var eInfo *EventNSTStaker
+
+		if eInfo = ret[feederID]; eInfo == nil {
+			eInfo = &EventNSTStaker{
+				deposits:  make(map[uint64]*fetchertypes.DepositInfo),
+				withdraws: make([]*fetchertypes.WithdrawInfo, 0),
+			}
+			ret[feederID] = eInfo
+		}
+		version, err := strconv.ParseUint(parsed[4], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse beaconchain_sync_index in nstChange from event_txUpdateNST response, error:%w", err)
+		}
+		if parsed[3] == withdrawValidator {
+			// withdraw
+			eInfo.withdraws = append(eInfo.withdraws, &fetchertypes.WithdrawInfo{
+				StakerIndex:     stakerIndex,
+				WithdrawVersion: version,
+			})
+			continue
+		}
+		if _, exists := eInfo.deposits[version]; exists {
+			return nil, fmt.Errorf("failed to parse nstChange: duplicate version %d in nstChange", version)
+		}
+		if version > eInfo.latestVersion {
+			eInfo.latestVersion = version
+		}
+		if eInfo.nextVersion == 0 || version < eInfo.nextVersion {
+			eInfo.nextVersion = version
+		}
+		amount, err := strconv.ParseUint(parsed[5], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse amount in nstChange from event_txUpdateNST response, error:%w", err)
+		}
+		stakerAddr := parsed[2]
+		validatorDecoded, err := hexutil.Decode(parsed[3])
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode validator hex in nstChange from event_txUpdateNST response, error:%w", err)
+		}
+		eInfo.deposits[version] = &fetchertypes.DepositInfo{
+			StakerIndex: stakerIndex,
+			StakerAddr:  stakerAddr,
+			Validator:   string(validatorDecoded),
+			Amount:      amount,
+		}
+	}
+	return ret, nil
 }
 
 type EventType int
@@ -228,7 +456,6 @@ type EventRes struct {
 	FeederIDs    string
 	TxHeight     string
 	NativeETH    string
-	eventMessage interface{}
 	Type         EventType
 }
 
@@ -248,14 +475,18 @@ type SubscribeResult struct {
 			} `json:"value"`
 		} `json:"data"`
 		Events struct {
-			Fee               []string `json:"fee_market.base_fee"`
-			ParamsUpdate      []string `json:"oracle_update_params.params_update"`
-			FinalPrice        []string `json:"create_price.final_price"`
-			PriceUpdate       []string `json:"create_price.price_update"`
-			FeederID          []string `json:"create_price.feeder_id"`
-			FeederIDs         []string `json:"create_price.feeder_ids"`
-			NativeTokenUpdate []string `json:"create_price.native_token_update"`
-			NativeTokenChange []string `json:"create_price.native_token_change"`
+			Fee              []string `json:"fee_market.base_fee"`
+			ParamsUpdate     []string `json:"create_price.params_update"`
+			FinalPrice       []string `json:"create_price.final_price"`
+			PriceUpdate      []string `json:"create_price.price_update"`
+			FeederID         []string `json:"create_price.feeder_id"`
+			FeederIDs        []string `json:"create_price.feeder_ids"`
+			NSTStakersChange []string `json:"create_price.nst_stakers_change"`
+			NSTPieceUpdate   []string `json:"create_price.nst_piece_update"`
+			NSTPieceChange   []string `json:"create_price.nst_piece_change"`
+			NSTBalanceUpdate []string `json:"create_price.nst_balance_update"`
+			NSTBalanceChange []string `json:"create_price.nst_balance_change"`
+			NSTFeedVersion   []string `json:"create_price.nst_feed_version"`
 		} `json:"events"`
 	} `json:"result"`
 }
@@ -285,8 +516,8 @@ func (s *SubscribeResult) TxHeight() (int64, bool) {
 // FeederIDs will return (nil, true) when there's no feederIDs
 func (s *SubscribeResult) FeederIDs() (feederIDs map[int64]struct{}, valid bool) {
 	events := s.Result.Events
-	if len(events.PriceUpdate) > 0 && events.PriceUpdate[0] == success {
-		if feederIDsStr := strings.Split(events.FeederIDs[0], "_"); len(feederIDsStr) > 0 {
+	if len(events.PriceUpdate) > 0 && events.PriceUpdate[0] == updated {
+		if feederIDsStr := strings.Split(events.FeederIDs[0], delimiterFields); len(feederIDsStr) > 0 {
 			feederIDs = make(map[int64]struct{})
 			for _, feederIDStr := range feederIDsStr {
 				id, err := strconv.ParseInt(feederIDStr, 10, 64)
@@ -310,10 +541,10 @@ func (s *SubscribeResult) FinalPrice() (prices []*FinalPrice, valid bool) {
 	if fps := s.Result.Events.FinalPrice; len(fps) > 0 {
 		prices = make([]*FinalPrice, 0, len(fps))
 		for _, price := range fps {
-			parsed := strings.Split(price, "_")
+			parsed := strings.Split(price, delimiterFields)
 			if l := len(parsed); l > 4 {
 				// nsteth
-				parsed[2] = strings.Join(parsed[2:l-1], "_")
+				parsed[2] = strings.Join(parsed[2:l-1], delimiterFields)
 				parsed[3] = parsed[l-1]
 				parsed = parsed[:4]
 			}
@@ -349,14 +580,6 @@ func (s *SubscribeResult) FinalPrice() (prices []*FinalPrice, valid bool) {
 	return
 }
 
-func (s *SubscribeResult) NSTChanges() (nstChanges []string, valid bool) {
-	if len(s.Result.Events.NativeTokenChange) > 0 {
-		nstChanges = s.Result.Events.NativeTokenChange
-		valid = true
-	}
-	return
-}
-
 func (s *SubscribeResult) ParamsUpdate() bool {
 	return len(s.Result.Events.ParamsUpdate) > 0
 }
@@ -370,14 +593,21 @@ func (s *SubscribeResult) Fee() (string, bool) {
 
 const (
 	// current version of 'Oracle' only support id=1(chainlink) as valid source
-	Chainlink uint64 = 1
-	denom            = "hua"
+	Chainlink         uint64 = 1
+	denom                    = "hua"
+	withdrawValidator        = "0xFFFFFFFFFFFFFFFF"
+
+	delimiterItems  = "|"
+	delimiterFields = "_"
 )
 
 const (
 	ENewBlock EventType = iota + 1
 	EUpdatePrice
-	EUpdateNST
+	// EUpdateNST
+	ENSTStakers
+	ENSTPiece
+	ENSTBalances
 )
 
 var (
@@ -389,7 +619,6 @@ var (
 )
 
 // Init intialize the imuaclient with configuration including consensuskey info, chainID
-// func Init(conf feedertypes.Config, mnemonic, privFile string, standalone bool) (*grpc.ClientConn, func(), error) {
 func Init(conf *feedertypes.Config, mnemonic, privFile string, txOnly bool, standalone bool) error {
 	if logger = feedertypes.GetLogger("imuaclient"); logger == nil {
 		panic("logger is not initialized")
@@ -416,7 +645,7 @@ func Init(conf *feedertypes.Config, mnemonic, privFile string, txOnly bool, stan
 		file, err := os.Open(path.Join(confSender.Path, privFile))
 		if err != nil {
 			// return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to open consensuskey file, %v", err))
-			return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to open consensuskey file, path:%s, error:%v", privFile, err))
+			return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to open consensuskey file, path:%s, privFile:%s, error:%v", confSender.Path, privFile, err))
 		}
 		defer file.Close()
 		var privKey feedertypes.PrivValidatorKey

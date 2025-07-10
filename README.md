@@ -20,7 +20,7 @@ Or check out the latest release.
 
 # Quick Start
 ## Start
-`pricefeeder --config path/to/config/config.yaml --sources path/to/sources/config start -m [mnemonic of validator's consensus key]`
+`pricefeeder --config path/to/config/config.yaml --sources_path path/to/sources/config start -m [mnemonic of validator's consensus key]`
 
 This command starts a process that continuously fetches price information from sources. It monitors the height changes of imuachain and sends price quote transactions to the imua blockchain during quote windows, according to the oracle parameter settings.
 
@@ -45,6 +45,14 @@ imua:
   rpc: !!str http://127.0.0.1:26657
 debugger:
   grpc: !!str :50051
+status:
+  grpc: 50052
+log:
+  level: info
+  maxsize: 100
+  maxbackups: 10
+  maxage: 30
+  compress: true
 ```
 For mnemonic used by validator to sign transactions (which should be ed25519 private-key corresponding to validator's consensus key), the priority is:
 1. cli: --mnemonic flag
@@ -66,10 +74,12 @@ tokens:
 ```
 - oracle_env_beaconchain.yaml (path/to/sources/config/oracle_env_beaconchain.yaml
 ```
-url:
-  !!str https://rpc.ankr.com/premium-http/eth_beacon/a5c4917a9285617a6027e6d924c558bc7732870d279a54bc995d2626ce54ab86
-url:
+urls:
+  beaconchain: !!str https://rpc.ankr.com/premium-http/eth_beacon/{$ANKR_API_KEY}
+  eth: !!str https://rpc.ankr.com/eth_holesky/{$ANKR_API_KEY}
+nstid:
   !!str 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee_0x65
+bootstrap: !!str 0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172
 ```
 ## Debug
 We provide command-line tools for sending price quote transactions manually through an interactive interface

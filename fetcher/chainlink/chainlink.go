@@ -1,10 +1,8 @@
 package chainlink
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -12,8 +10,6 @@ import (
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 func (s *source) fetch(token string) (*fetchertypes.PriceInfo, error) {
@@ -41,29 +37,6 @@ func (s *source) fetch(token string) (*fetchertypes.PriceInfo, error) {
 		Timestamp: time.Now().UTC().Format(feedertypes.TimeLayout),
 		RoundID:   roundData.RoundId.String(),
 	}, nil
-}
-
-func isContractAddress(addr string, client *ethclient.Client) bool {
-	if len(addr) == 0 {
-		logger.Error("contract address is empty")
-		return false
-	}
-
-	// Ensure it is an Ethereum address: 0x followed by 40 hexadecimal characters.
-	re := regexp.MustCompile("^0x[0-9a-fA-F]{40}$")
-	if !re.MatchString(addr) {
-		logger.Error(" contract address is not valid", "address", addr)
-		return false
-	}
-
-	// Ensure it is a contract address.
-	address := common.HexToAddress(addr)
-	bytecode, err := client.CodeAt(context.Background(), address, nil)
-	if err != nil {
-		logger.Error("failed to get code at contract address", "address", address, "error", err)
-		return false
-	}
-	return len(bytecode) > 0
 }
 
 func (s *source) reload(cfgPath string, token string) error {
