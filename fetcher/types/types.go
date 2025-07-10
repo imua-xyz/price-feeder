@@ -817,9 +817,9 @@ func (s *Stakers) CacheDepositsWithdraws(deposits map[uint64]*DepositInfo, nextV
 		return fmt.Errorf("failed to cache deposits, nextVersion is 0")
 	}
 	if len(s.SInfosAdd) > 0 && (s.SInfosAdd[nextVersion-1] == nil || s.SInfosAdd[nextVersion] != nil) {
-		return fmt.Errorf("failed to cache deposits, version not continuos or already exists, nextVersion:%d, no nextVersion-1:%t", nextVersion, s.SInfosAdd[nextVersion-1] == nil)
+		return fmt.Errorf("failed to cache deposits, version not continuos:%t, or already exists:%t, nextVersion:%d", s.SInfosAdd[nextVersion-1] == nil, s.SInfosAdd[nextVersion] != nil, nextVersion)
 	}
-	if len(s.SInfosAdd) > 0 && s.Version+1 != nextVersion {
+	if len(s.SInfosAdd) == 0 && s.Version+1 != nextVersion {
 		return fmt.Errorf("failed to cache deposits, version mismatch, current:%d, next:%d", s.Version, nextVersion)
 	}
 
@@ -974,8 +974,6 @@ func (s *Stakers) GrowVersionsFromCacheByDepositWithdraw(version, withdrawVersio
 		return err
 	}
 	s.complete(version, withdrawVersion)
-	s.Version = version
-	s.WithdrawVersion = withdrawVersion
 	return nil
 }
 
@@ -993,6 +991,8 @@ func (s *Stakers) complete(version, withdrawVersion uint64) {
 	}
 	s.WithdrawInfos = s.WithdrawInfos[idx:]
 	s.prevWithdrawInfos = make(map[uint32]uint64)
+	s.Version = version
+	s.WithdrawVersion = withdrawVersion
 }
 
 func (s *Stakers) downgradeVersion(version, _ uint64) {
@@ -1000,7 +1000,6 @@ func (s *Stakers) downgradeVersion(version, _ uint64) {
 		deposit := s.SInfosAdd[i]
 		sInfo := s.SInfos[uint32(deposit.StakerIndex)]
 		sInfo.RemoveValidator(deposit.Validator, deposit.Amount)
-		s.Version--
 	}
 	for sIndex, sVersion := range s.prevWithdrawInfos {
 		sInfo, exists := s.SInfos[sIndex]
@@ -1056,9 +1055,6 @@ func (s *Stakers) ApplyBalanceChanges(changes *oracletypes.RawDataNST, version u
 	for sIdx, sInfo := range updated {
 		s.SInfos[sIdx] = sInfo
 	}
-	// Increment the version after successful application
-	s.Version = version
-	s.WithdrawVersion = withdrawVersion
 	return nil
 }
 
@@ -1102,7 +1098,7 @@ func (s *Stakers) Reset(sInfos []*oracletypes.StakerInfo, version *oracletypes.N
 		}
 		balance := uint64(0)
 		l := len(sInfo.BalanceList)
-		if l > 0 && sInfo.BalanceList[l-1] != nil && sInfo.BalanceList[l-1].Balance > 0 {
+		if l > 0 && sInfo.BalanceList[l-1] != nil {
 			balance = uint64(sInfo.BalanceList[l-1].Balance)
 		}
 		if balance < pendingDepositAmount {

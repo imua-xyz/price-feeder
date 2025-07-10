@@ -432,7 +432,10 @@ func (s *SubscribeResult) getEventNSTStakers() (EventNSTStakers, error) {
 			return nil, fmt.Errorf("failed to parse amount in nstChange from event_txUpdateNST response, error:%w", err)
 		}
 		stakerAddr := parsed[2]
-		validatorDecoded, _ := hexutil.Decode(parsed[3])
+		validatorDecoded, err := hexutil.Decode(parsed[3])
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode validator hex in nstChange from event_txUpdateNST response, error:%w", err)
+		}
 		eInfo.deposits[version] = &fetchertypes.DepositInfo{
 			StakerIndex: stakerIndex,
 			StakerAddr:  stakerAddr,
