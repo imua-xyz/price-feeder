@@ -10,8 +10,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type subEvent string
-type eventQuery string
+type (
+	subEvent   string
+	eventQuery string
+)
 
 const (
 	subStr                       = `{"jsonrpc":"2.0","method":"subscribe","id":0,"params":{"query":"%s"}}`
@@ -174,7 +176,6 @@ func (ec *imuaClient) markWsActive() {
 	ec.wsLock.Lock()
 	*ec.wsActive = true
 	ec.wsLock.Unlock()
-
 }
 
 func (ec *imuaClient) markWsInactive() {
@@ -285,6 +286,7 @@ func (ec imuaClient) startReadRoutine() bool {
 					event, err := response.GetEventNewBlock()
 					if err != nil {
 						ec.logger.Error("failed to get newBlock event from event-response", "response", response, "error", err)
+						break
 					}
 					ec.wsEventsCh <- event
 				case eTxUpdatePrice:
