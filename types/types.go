@@ -54,6 +54,9 @@ type Config struct {
 	Sender struct {
 		Mnemonic string `mapstructure:"mnemonic"`
 		Path     string `mapstructure:"path"`
+		PrivFile string `mapstructure:"priv_file"` // file name of priv_validator_key.json
+		// privListenAddr has higher priority than path
+		PrivListenAddr string `mapstructure:"priv_listen_addr"`
 	} `mapstructure:"sender"`
 	Imua struct {
 		ChainID string `mapstructure:"chainid"`
@@ -88,9 +91,11 @@ type LoggerWrapper struct {
 func (l *LoggerWrapper) Info(msg string, keyvals ...interface{}) {
 	l.Infow(msg, keyvals...)
 }
+
 func (l *LoggerWrapper) Debug(msg string, keyvals ...interface{}) {
 	l.Debugw(msg, keyvals...)
 }
+
 func (l *LoggerWrapper) Error(msg string, keyvals ...interface{}) {
 	l.Errorw(msg, keyvals...)
 }
@@ -233,7 +238,6 @@ func InitConfig(cfgFile string) (*Config, error) {
 
 // ReloadConfig will reload config file with path set by InitConfig
 func ReloadConfig() Config {
-
 	// If a config file is found, read it in.
 	if err := v.ReadInConfig(); err == nil {
 		fmt.Fprintln(os.Stderr, "Using config file:", v.ConfigFileUsed())

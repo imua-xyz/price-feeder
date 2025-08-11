@@ -17,6 +17,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/gorilla/websocket"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
+	"github.com/imua-xyz/price-feeder/internal/privval"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
@@ -28,7 +29,8 @@ type imuaClient struct {
 	grpcManager *connManager
 
 	// params for sign/send transactions
-	privKey cryptotypes.PrivKey
+	//	privKey cryptotypes.PrivKey
+	pv      privval.PrivValidator
 	pubKey  cryptotypes.PubKey
 	encCfg  params.EncodingConfig
 	txCfg   client.TxConfig
@@ -49,12 +51,14 @@ type imuaClient struct {
 }
 
 // NewImuaClient creates a imua-client used to do queries and send transactions to imuad
-func NewImuaClient(logger feedertypes.LoggerInf, endpoint, wsEndpoint, endpointDebug string, privKey cryptotypes.PrivKey, encCfg params.EncodingConfig, chainID string, txOnly bool) (*imuaClient, error) {
+func NewImuaClient(logger feedertypes.LoggerInf, endpoint, wsEndpoint, endpointDebug string, pv privval.PrivValidator, encCfg params.EncodingConfig, chainID string, txOnly bool) (*imuaClient, error) {
+	pubKey := pv.GetPubKey()
 	ec := &imuaClient{
-		chainID:          chainID,
-		logger:           logger,
-		privKey:          privKey,
-		pubKey:           privKey.PubKey(),
+		chainID: chainID,
+		logger:  logger,
+		//		privKey:          privKey,
+		pubKey:           pubKey,
+		pv:               pv,
 		encCfg:           encCfg,
 		txCfg:            encCfg.TxConfig,
 		wsEndpoint:       wsEndpoint,

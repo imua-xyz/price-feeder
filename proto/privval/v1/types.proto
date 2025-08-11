@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package privval.v1;
+
+option go_package = "github.com/imua-xyz/price-feeder/internal/privval/types";
+
+message PriceFeedRequest{
+  uint64 id = 1;
+  bytes raw_data = 2;
+}
+
+message PriceFeedResponse{
+  uint64 request_id = 1;
+  bytes signature = 2;
+}
+
+message Ping {}
+message Pong {}
+
+message OracleStreamMessage {
+  oneof sum {
+    PriceFeedRequest price_feed_request = 1;
+    PriceFeedResponse price_feed_response = 2;
+    Ping ping = 3;
+    Pong pong = 4;
+  }
+}
