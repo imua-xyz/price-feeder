@@ -646,6 +646,11 @@ func Init(conf *feedertypes.Config, mnemonic, privFile string, txOnly bool, stan
 		}
 		return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to NewImuaClient, chainID:%s, error:%v", confImua.ChainID, err))
 	}
+	// debug(leonz)--->test-vvvvvvv
+	// conf.Sender.PrivListenAddr = ""
+	// tmp, err := privval.GetPrivValidator(conf, logger)
+	// defaultImuaClient.pubKey = tmp.GetPubKey()
+	// ^^^^^^^
 
 	return nil
 }

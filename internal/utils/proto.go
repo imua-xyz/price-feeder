@@ -6,16 +6,28 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 )
 
 type V2DelimitedWriter struct {
 	w *bufio.Writer
+	c net.Conn
 }
 
 func NewV2DelimitedWriter(c net.Conn) *V2DelimitedWriter {
-	return &V2DelimitedWriter{w: bufio.NewWriter(c)}
+	return &V2DelimitedWriter{
+		w: bufio.NewWriter(c),
+		c: c,
+	}
+}
+
+func (vw *V2DelimitedWriter) WriteMsgWithTimeout(m proto.Message, d time.Duration) (int, error) {
+	if err := vw.c.SetWriteDeadline(time.Now().Add(d)); err != nil {
+		return 0, err
+	}
+	return vw.WriteMsg(m)
 }
 
 func (vw *V2DelimitedWriter) WriteMsg(m proto.Message) (int, error) {
@@ -37,10 +49,21 @@ func (vw *V2DelimitedWriter) WriteMsg(m proto.Message) (int, error) {
 
 type V2DelimitedReader struct {
 	r *bufio.Reader
+	c net.Conn
 }
 
 func NewV2DelimitedReader(c net.Conn) *V2DelimitedReader {
-	return &V2DelimitedReader{r: bufio.NewReader(c)}
+	return &V2DelimitedReader{
+		r: bufio.NewReader(c),
+		c: c,
+	}
+}
+
+func (vr *V2DelimitedReader) ReadMsgWithTimeout(m proto.Message, d time.Duration) error {
+	if err := vr.c.SetReadDeadline(time.Now().Add(d)); err != nil {
+		return err
+	}
+	return vr.ReadMsg(m)
 }
 
 func (vr *V2DelimitedReader) ReadMsg(m proto.Message) error {

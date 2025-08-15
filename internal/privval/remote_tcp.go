@@ -9,6 +9,7 @@ import (
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/imua-xyz/price-feeder/internal/privval/types"
 	"github.com/imua-xyz/price-feeder/internal/utils"
+	// "github.com/libp2p/go-msgio/protoio"
 )
 
 var _ PrivValidator = (*PrivValidatorImplRemote)(nil)
@@ -124,6 +125,8 @@ func (pv *PrivValidatorImplRemote) readloop() {
 	aliveTicker := time.NewTicker(3 * pingTimeout)
 	for {
 		select {
+		case <-pv.quitRCh:
+			return
 		case <-aliveTicker.C:
 			if !active {
 				// quite write loop, so we can reconnect
@@ -133,13 +136,11 @@ func (pv *PrivValidatorImplRemote) readloop() {
 			active = false
 		default:
 			var msg types.OracleStreamMessage
-			readDeadline := time.Now().Add(defaultRWTimeout)
-			pv.conn.SetReadDeadline(readDeadline)
-			err := r.ReadMsg(&msg)
+			err := r.ReadMsgWithTimeout(&msg, defaultRWTimeout)
 			if err != nil {
-				logger.Error().Err(err).Msg("failed to read message")
-				pv.reconnect(pv.quitWCh)
-				return
+				// mostly caused by timeout, ignore this err logs
+				logger.Warn().Err(err).Msg("failed to read message")
+				continue
 			}
 			active = true
 			switch x := msg.Sum.(type) {
@@ -150,7 +151,7 @@ func (pv *PrivValidatorImplRemote) readloop() {
 					logger.Error().Err(err).Msg(fmt.Sprintf("missing waiter for request ID:%d", res.RequestId))
 					continue
 				}
-				waitReq, ok := w.(chan []byte)
+				waitReq, ok := w.(chan<- []byte)
 				if !ok {
 					logger.Error().Msg("invalid waiter type, expected chan []byte")
 					pv.waiters.Delete(res.RequestId)
@@ -163,8 +164,9 @@ func (pv *PrivValidatorImplRemote) readloop() {
 				}
 			case *types.OracleStreamMessage_Ping:
 				pv.pingpong(false) // send pong in response to ping
+			case *types.OracleStreamMessage_Pong:
+				// dont't handle pong message here, it's just a keep-alive message
 			default:
-				// dont handle :case *types.OracleStreamMessage_Pong
 				logger.Warn().Msgf("received unknown message type: %T", x)
 			}
 		}
@@ -179,13 +181,14 @@ func (pv *PrivValidatorImplRemote) writeloop() {
 	for {
 		var err error
 		select {
+		case <-pv.quitWCh:
+			return // quit write loop when quitWCh is closed
 		case <-tic.C:
-			pv.conn.SetWriteDeadline(time.Now().Add(defaultRWTimeout))
-			_, err = w.WriteMsg(&types.OracleStreamMessage{
+			_, err = w.WriteMsgWithTimeout(&types.OracleStreamMessage{
 				Sum: &types.OracleStreamMessage_Ping{
 					Ping: &types.Ping{},
 				},
-			})
+			}, defaultRWTimeout)
 			if err != nil {
 				logger.Error().Err(err).Msg("failed to write ping message")
 			}
@@ -199,9 +202,9 @@ func (pv *PrivValidatorImplRemote) writeloop() {
 				// we put the result channel into waiters map before we send the message to make sure the readloop will not miss/drop any expected response if any
 				pv.addWaiter(id, resultWriteView)
 				var n int
-				n, err = w.WriteMsg(req.payload)
+				n, err = w.WriteMsgWithTimeout(req.payload, defaultRWTimeout)
 				if err != nil {
-					logger.Error().Err(err).Msg("failed to write price-feed-sing-request message")
+					logger.Error().Err(err).Msg("failed to write price-feed-sign-request message")
 					pv.waiters.Delete(id)
 					close(result)
 					// TODO: reconnect ?
@@ -219,7 +222,7 @@ func (pv *PrivValidatorImplRemote) writeloop() {
 				default:
 				}
 			default:
-				if _, err = w.WriteMsg(req.payload); err != nil {
+				if _, err = w.WriteMsgWithTimeout(req.payload, defaultRWTimeout); err != nil {
 					// TODO: reconnect ?
 					logger.Error().Err(err).Msg("failed to write message")
 				}
@@ -248,6 +251,8 @@ func (pv *PrivValidatorImplRemote) sessionloop(success chan struct{}) {
 		select {
 		case <-pv.connTrigger:
 			pv.wg.Wait() // wait for all goroutines to finish before accepting new connections
+			// TODO: close pair client first, then accept new connection
+			// TODO in tmkms, it must re-dial-out when closed
 			conn, err := lis.Accept()
 			if err == nil {
 				pv.conn = conn

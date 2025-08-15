@@ -2,6 +2,7 @@ package imuaclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	query "github.com/cosmos/cosmos-sdk/types/query"
@@ -19,7 +20,6 @@ func (ec imuaClient) GetParams() (*oracleTypes.Params, error) {
 		return &oracleTypes.Params{}, fmt.Errorf("failed to query oracle params from oracleClient, error:%w", err)
 	}
 	return &paramsRes.Params, nil
-
 }
 
 // GetLatestPrice returns latest price of specific token
@@ -33,7 +33,6 @@ func (ec imuaClient) GetLatestPrice(tokenID uint64) (oracleTypes.PriceTimeRound,
 		return oracleTypes.PriceTimeRound{}, fmt.Errorf("failed to get latest price from oracleClient, error:%w", err)
 	}
 	return priceRes.Price, nil
-
 }
 
 // GetStakerInfos get all stakerInfos for the assetID
@@ -61,10 +60,8 @@ func (ec imuaClient) GetStakerInfos(assetID string) ([]*oracleTypes.StakerInfo, 
 			version = stakerInfoRes.Version
 		} else if version.Version.Version != stakerInfoRes.Version.Version.Version {
 			// version has changed during the query
-			version = nil
-			ret = nil
-			reqPage.Key = nil
-			continue
+			// we just return nil response and error to let claller handle this case
+			return nil, nil, errors.New("new deposit/withdraw happend during query")
 		}
 		reqPage.Key = stakerInfoRes.Pagination.NextKey
 	}
