@@ -1,0 +1,57 @@
+// Protocol Buffer definitions for Oracle Stream protocol
+// Defines message types for price feeder ↔ TMKMS communication
+syntax = "proto3";
+
+package privval.v1;
+
+option go_package = "github.com/imua-xyz/price-feeder/internal/privval/types";
+
+// Request to sign price feed data
+message SignPriceFeedRequest{
+  // Unique request identifier for correlation
+  uint64 id = 1;
+
+  // Raw price feed data to be signed
+  bytes raw_data = 2;
+}
+
+// Response containing the signature
+message SignPriceFeedResponse{
+  // ID of the original request
+  uint64 request_id = 1;
+
+  // Cryptographic signature of the raw data
+  bytes signature = 2;
+}
+
+// Request for validator's public key
+message GetPubKeyRequest {
+  // Unique request identifier for correlation
+  uint64 id = 1;
+}
+
+// Response containing the public key
+message GetPubKeyResponse {
+  // ID of the original request
+  uint64 request_id = 1;
+
+  // Validator's public key
+  bytes public_key = 2;
+}
+
+// Connection health monitoring messages
+message Ping {}
+message Pong {}
+
+// Main message container for the stream
+message OracleStreamMessage {
+  // Union field for different message types
+  oneof sum {
+    SignPriceFeedRequest sign_price_feed_request = 1;
+    SignPriceFeedResponse sign_price_feed_response = 2;
+    GetPubKeyRequest get_pub_key_request = 3;
+    GetPubKeyResponse get_pub_key_response = 4;
+    Ping ping = 5;
+    Pong pong = 6;
+  }
+}

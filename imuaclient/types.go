@@ -1,21 +1,17 @@
 package imuaclient
 
 import (
-	cryptoed25519 "crypto/ed25519"
+	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
-	"github.com/cosmos/go-bip39"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/evmos/evmos/v16/encoding"
 	"github.com/imua-xyz/imuachain/app"
@@ -23,6 +19,7 @@ import (
 	oracleTypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	oracletypes "github.com/imua-xyz/imuachain/x/oracle/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
+	"github.com/imua-xyz/price-feeder/internal/privval"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
@@ -176,12 +173,15 @@ type FinalPrice struct {
 func (f *FinalPrice) TokenID() int64 {
 	return f.tokenID
 }
+
 func (f *FinalPrice) RoundID() string {
 	return f.roundID
 }
+
 func (f *FinalPrice) Price() string {
 	return f.price
 }
+
 func (f *FinalPrice) Decimal() int32 {
 	return f.decimal
 }
@@ -205,6 +205,7 @@ func (s *SubscribeResult) GetEventUpdatePrice() (*EventUpdatePrice, error) {
 		txHeight: txHeight,
 	}, nil
 }
+
 func (e *EventUpdatePrice) Prices() []*FinalPrice {
 	return e.prices
 }
@@ -525,7 +526,6 @@ func (s *SubscribeResult) FeederIDs() (feederIDs map[int64]struct{}, valid bool)
 			}
 			valid = true
 		}
-
 	}
 	// we don't take it as a 'false' case when there's no feederIDs
 	valid = true
@@ -626,45 +626,9 @@ func Init(conf *feedertypes.Config, mnemonic, privFile string, txOnly bool, stan
 	}
 
 	confImua := conf.Imua
+
 	confSender := conf.Sender
-	privBase64 := ""
-
-	// if mnemonic is not set from flag, then check config file to find if there is mnemonic configured
-	if len(mnemonic) == 0 && len(confSender.Mnemonic) > 0 {
-		logger.Info("set mnemonic from config", "mnemonic", confSender.Mnemonic)
-		mnemonic = confSender.Mnemonic
-	}
-
-	if len(mnemonic) == 0 {
-		// load privatekey from local path
-		file, err := os.Open(path.Join(confSender.Path, privFile))
-		if err != nil {
-			// return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to open consensuskey file, %v", err))
-			return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to open consensuskey file, path:%s, privFile:%s, error:%v", confSender.Path, privFile, err))
-		}
-		defer file.Close()
-		var privKey feedertypes.PrivValidatorKey
-		if err := json.NewDecoder(file).Decode(&privKey); err != nil {
-			return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse consensuskey from json file, file path:%s,  error:%v", privFile, err))
-		}
-		logger.Info("load privatekey from local file", "path", privFile)
-		privBase64 = privKey.PrivKey.Value
-	} else if !bip39.IsMnemonicValid(mnemonic) {
-		return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("invalid mnemonic:%s", mnemonic))
-	}
-	var privKey cryptotypes.PrivKey
-	if len(mnemonic) > 0 {
-		privKey = ed25519.GenPrivKeyFromSecret([]byte(mnemonic))
-	} else {
-		privBytes, err := base64.StdEncoding.DecodeString(privBase64)
-		if err != nil {
-			return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse privatekey from base64_string:%s, error:%v", privBase64, err))
-		}
-		//nolint:all
-		privKey = &ed25519.PrivKey{
-			Key: cryptoed25519.PrivateKey(privBytes),
-		}
-	}
+	confSender.PrivFile = privFile
 
 	encCfg := encoding.MakeConfig(app.ModuleBasics)
 
@@ -673,12 +637,61 @@ func Init(conf *feedertypes.Config, mnemonic, privFile string, txOnly bool, stan
 	}
 
 	var err error
-	if defaultImuaClient, err = NewImuaClient(logger, confImua.Grpc, confImua.Ws, conf.Imua.Rpc, privKey, encCfg, confImua.ChainID, txOnly); err != nil {
+	var pv privval.PrivValidator
+	pv, err = privval.GetPrivValidator(conf, logger)
+	if err != nil {
+		logger.Error("failed to get privValidator", "error", err)
+		return err
+	}
+	// we don't care about the result here, just retry until we get the pubkey
+	RetryGetPubKey(context.Background(), logger, pv)
+	if defaultImuaClient, err = NewImuaClient(logger, confImua.Grpc, confImua.Ws, conf.Imua.Rpc, pv, encCfg, confImua.ChainID, txOnly); err != nil {
 		if errors.Is(err, feedertypes.ErrInitConnectionFail) {
 			return err
 		}
-		return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to NewImuaClient, privKey:%v, chainID:%s, error:%v", privKey, confImua.ChainID, err))
+		return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to NewImuaClient, chainID:%s, error:%v", confImua.ChainID, err))
 	}
-
 	return nil
+}
+
+func RetryGetPubKey(ctx context.Context, logger feedertypes.LoggerInf, pv privval.PrivValidator) (cryptotypes.PubKey, error) {
+	backoff := 200 * time.Millisecond
+	maxBackoff := 2 * time.Second
+	attempt := 0
+
+	for {
+		// 1) quick exit if context done
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		// 2) try get pubkey
+		pk, err := pv.GetPubKey()
+		if err == nil && pk != nil {
+			return pk, nil
+		}
+
+		// 3) not ready yet: sleep with backoff
+		attempt++
+		if attempt%10 == 1 && logger != nil {
+			logger.Info("waiting for remote signer to be ready (pubkey not available yet)", "attempt", attempt)
+		}
+
+		// backoff with cap
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+
+		// grow backoff up to max
+		backoff = time.Duration(float64(backoff) * 1.5)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
 }

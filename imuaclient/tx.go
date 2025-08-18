@@ -94,7 +94,7 @@ func (ec imuaClient) signMsg(msgs ...sdk.Msg) (authsigning.Tx, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to getSignBytes, error:%w", err)
 	}
-	sigBytes, err := ec.privKey.Sign(bytesToSign)
+	sigBytes, err := ec.pv.SignRawDataSync(bytesToSign)
 	if err != nil {
 		ec.logger.Error("failed to sign txBytes", "error", err)
 		return nil, err

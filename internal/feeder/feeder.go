@@ -80,7 +80,7 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 	}
 	feeders.Start()
 
-	// The InitComponents had done, which means then conenction between price-feeder and imuachain is established, so we don't need too many retries
+	// The InitComponents had done, which means the conenction between price-feeder and imuachain is established, so we don't need too many retries
 	// this is processed before nst-events handling, so it's the only source of chainging for a specific feeder
 	for feederID, assetID := range twoPhasesFeeders {
 		feeder := feeders.feederMap[feederID]
