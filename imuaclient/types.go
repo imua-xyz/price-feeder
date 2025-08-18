@@ -1,12 +1,15 @@
 package imuaclient
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -640,17 +643,55 @@ func Init(conf *feedertypes.Config, mnemonic, privFile string, txOnly bool, stan
 		logger.Error("failed to get privValidator", "error", err)
 		return err
 	}
+	// we don't care about the result here, just retry until we get the pubkey
+	RetryGetPubKey(context.Background(), logger, pv)
 	if defaultImuaClient, err = NewImuaClient(logger, confImua.Grpc, confImua.Ws, conf.Imua.Rpc, pv, encCfg, confImua.ChainID, txOnly); err != nil {
 		if errors.Is(err, feedertypes.ErrInitConnectionFail) {
 			return err
 		}
 		return feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to NewImuaClient, chainID:%s, error:%v", confImua.ChainID, err))
 	}
-	// debug(leonz)--->test-vvvvvvv
-	// conf.Sender.PrivListenAddr = ""
-	// tmp, err := privval.GetPrivValidator(conf, logger)
-	// defaultImuaClient.pubKey = tmp.GetPubKey()
-	// ^^^^^^^
-
 	return nil
+}
+
+func RetryGetPubKey(ctx context.Context, logger feedertypes.LoggerInf, pv privval.PrivValidator) (cryptotypes.PubKey, error) {
+	backoff := 200 * time.Millisecond
+	maxBackoff := 2 * time.Second
+	attempt := 0
+
+	for {
+		// 1) quick exit if context done
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		// 2) try get pubkey
+		pk, err := pv.GetPubKey()
+		if err == nil && pk != nil {
+			return pk, nil
+		}
+
+		// 3) not ready yet: sleep with backoff
+		attempt++
+		if attempt%10 == 1 && logger != nil {
+			logger.Info("waiting for remote signer to be ready (pubkey not available yet)", "attempt", attempt)
+		}
+
+		// backoff with cap
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+
+		// grow backoff up to max
+		backoff = time.Duration(float64(backoff) * 1.5)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
 }

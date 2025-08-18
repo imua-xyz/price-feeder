@@ -15,7 +15,7 @@ const (
 	maxWaiters       = 1000
 	defaultRWTimeout = 5 * time.Second
 	pingTimeout      = 10 * time.Second
-	signatureTimeout = 3 * time.Second
+	requestTimeout   = 3 * time.Second
 )
 
 var logger = log.Logger
@@ -23,7 +23,7 @@ var logger = log.Logger
 type PrivValidator interface {
 	SignRawDataSync(rawMessage []byte) (singature []byte, err error)
 	Init()
-	GetPubKey() cryptotypes.PubKey
+	GetPubKey() (cryptotypes.PubKey, error)
 }
 
 type sendResp struct {
@@ -46,9 +46,9 @@ type sendStreamObj struct {
 func GetPrivValidator(conf *feedertypes.Config, logger feedertypes.LoggerInf) (pv PrivValidator, err error) {
 	senderConf := conf.Sender
 	if len(senderConf.PrivListenAddr) > 0 {
-		pv, err = NewPrivValidatorImplRemote(senderConf.PrivListenAddr)
+		pv, err = NewPrivValidatorImplRemote(senderConf.PrivListenAddr, logger.With("signer", "remote"))
 	} else {
-		pv, err = NewPrivValidatorImplLocal(conf, logger)
+		pv, err = NewPrivValidatorImplLocal(conf, logger.With("signer", "local"))
 	}
 	if err == nil {
 		pv.Init()

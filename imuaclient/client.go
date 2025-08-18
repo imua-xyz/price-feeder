@@ -29,7 +29,6 @@ type imuaClient struct {
 	grpcManager *connManager
 
 	// params for sign/send transactions
-	//	privKey cryptotypes.PrivKey
 	pv      privval.PrivValidator
 	pubKey  cryptotypes.PubKey
 	encCfg  params.EncodingConfig
@@ -52,7 +51,10 @@ type imuaClient struct {
 
 // NewImuaClient creates a imua-client used to do queries and send transactions to imuad
 func NewImuaClient(logger feedertypes.LoggerInf, endpoint, wsEndpoint, endpointDebug string, pv privval.PrivValidator, encCfg params.EncodingConfig, chainID string, txOnly bool) (*imuaClient, error) {
-	pubKey := pv.GetPubKey()
+	pubKey, err := pv.GetPubKey()
+	if err != nil {
+		return nil, errors.New("failed to get public key from privval")
+	}
 	ec := &imuaClient{
 		chainID: chainID,
 		logger:  logger,
@@ -69,7 +71,6 @@ func NewImuaClient(logger feedertypes.LoggerInf, endpoint, wsEndpoint, endpointD
 		wsEventsCh:       make(chan EventInf),
 	}
 
-	var err error
 	if txOnly && len(endpointDebug) == 0 {
 		return nil, errors.New("rpc endpoint is empty under debug mode")
 	}

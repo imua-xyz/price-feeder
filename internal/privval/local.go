@@ -3,6 +3,7 @@ package privval
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -81,6 +82,9 @@ func NewPrivValidatorImplLocal(conf *feedertypes.Config, logger feedertypes.Logg
 
 func (pv *PrivValidatorImplLocal) Init() {}
 
-func (pv *PrivValidatorImplLocal) GetPubKey() cryptotypes.PubKey {
-	return pv.privKey.PubKey()
+func (pv *PrivValidatorImplLocal) GetPubKey() (cryptotypes.PubKey, error) {
+	if pv.privKey == nil {
+		return nil, errors.New("privKey is nil")
+	}
+	return pv.privKey.PubKey(), nil
 }

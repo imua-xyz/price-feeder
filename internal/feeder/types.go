@@ -25,9 +25,7 @@ const (
 	statusOk        = 0
 )
 
-var (
-	ErrNoAvailableNextIndex *types.Err = types.NewErr("there's no available next index")
-)
+var ErrNoAvailableNextIndex *types.Err = types.NewErr("there's no available next index")
 
 type PriceFetcher interface {
 	GetLatestPrice(source, token string) (fetchertypes.PriceInfo, error)
@@ -86,8 +84,7 @@ type updateParamsReq struct {
 	result chan *updateParamsRes
 }
 
-type updateParamsRes struct {
-}
+type updateParamsRes struct{}
 
 type localPrice struct {
 	price  fetchertypes.PriceInfo
@@ -170,7 +167,6 @@ func (t *twoPhasesInfo) addMT(roundID uint64, mt *oracletypes.MerkleTree) bool {
 	}
 
 	for _, data := range t.cachedTree {
-
 		// skip duplicated raw data
 		if bytes.Equal(data.RootHash(), mt.RootHash()) {
 			return false
@@ -589,7 +585,6 @@ func newFeeder(tf *oracletypes.TokenFeeder, feederID int, fetcher PriceFetcher, 
 // return true when 1st phase for input roundID had been finalized
 func (f *feeder) send2ndPhaseTx() ([]uint32, bool) {
 	pwfs, err := f.NextSendablePieceWithProofs(f.roundID)
-
 	if err != nil {
 		if errors.Is(err, ErrNoAvailableNextIndex) {
 			return nil, true
@@ -971,7 +966,6 @@ func NewFeeders(logger feedertypes.LoggerInf, fetcher PriceFetcher, submitter pr
 		updateNSTBalancesCh: make(chan *updateNSTBalancesReq, 1),
 		updateNSTPiecesCh:   make(chan *updateNSTPiecesReq, 1),
 	}
-
 }
 
 func (fs *Feeders) SetupFeeder(tf *oracletypes.TokenFeeder, feederID int, source string, token string, maxNonce, decimal int32, pieceSize uint32, isTwoPhases bool) {
@@ -1191,7 +1185,6 @@ func (fs *Feeders) UpdateNSTBalances(updates imuaclienttypes.EventNSTBalances) [
 		}
 		return ret
 	}
-
 }
 
 func (fs *Feeders) UpdateNSTPieces(updates imuaclienttypes.EventNSTPieces) []*failedFeedersWithError {
