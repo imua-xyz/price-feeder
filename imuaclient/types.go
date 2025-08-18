@@ -369,11 +369,6 @@ func (s *SubscribeResult) getEventNSTStakers() (EventNSTStakers, error) {
 
 	tmp := s.Result.Events.NSTStakersChange[0]
 
-	// Add format validation
-	if !strings.Contains(tmp, delimiterItems) {
-		return nil, fmt.Errorf("invalid format: expected pipe-delimited format, got: %s", tmp)
-	}
-
 	nstChanges := strings.Split(tmp, delimiterItems)
 
 	ret := make(EventNSTStakers)

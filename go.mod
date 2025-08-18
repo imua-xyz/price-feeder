@@ -10,7 +10,7 @@ require (
 	github.com/ethereum/go-ethereum v1.13.5-0.20231027145059-2d7dba024d76
 	github.com/evmos/evmos/v16 v16.0.0
 	github.com/gorilla/websocket v1.5.1
-	github.com/imua-xyz/imuachain v0.0.0-20250221095538-9f51483a7966
+	github.com/imua-xyz/imuachain v1.1.3
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.8.4
@@ -275,7 +275,6 @@ replace (
 	// Security Advisory https://github.com/advisories/GHSA-h395-qcrw-5vmq
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.9.1
 
-	github.com/imua-xyz/imuachain => github.com/leonz789/exocore v0.0.0-20250620011441-786eba0d1487
 	// replace broken goleveldb
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	//fix cosmos-sdk error
