@@ -8,13 +8,12 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"slices"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -124,6 +123,7 @@ func (p PriceInfo) EqualPrice(price PriceInfo) bool {
 	}
 	return false
 }
+
 func (p PriceInfo) EqualToBase64Price(price PriceInfo) bool {
 	if len(p.Price) < 32 {
 		return false
@@ -214,6 +214,7 @@ func newAddTokenReq(tokenName string) (*addTokenReq, chan *addTokenRes) {
 func (r *addTokenRes) Error() error {
 	return r.err
 }
+
 func (r *addTokenRes) Price() *PriceSync {
 	return r.price
 }
@@ -263,6 +264,10 @@ func NewSource(logger feedertypes.LoggerInf, name string, fetch SourceFetchFunc,
 	}
 }
 
+func (s *Source) Logger() feedertypes.LoggerInf {
+	return s.logger
+}
+
 // InitTokenNames adds the token names in the source's token list
 // NOTE: call before start
 func (s *Source) InitTokens(tokens []string) bool {
@@ -308,7 +313,7 @@ func (s *Source) Start() map[string]*PriceSync {
 	// main routine of source, listen to:
 	// addToken to add a new token for the source and start fetching that token's price
 	// tokenNotConfigured to reload the source's config file for required token
-	// stop closes the source routines and set runnign status to false
+	// stop closes the source routines and set running status to false
 	go func() {
 		for {
 			select {
@@ -455,10 +460,12 @@ const (
 	Chainlink    = "chainlink"
 	BaseCurrency = "usdt"
 	BeaconChain  = "beaconchain"
+	Bsc          = "bsc"
 	Solana       = "solana"
 
 	NativeTokenETH NSTToken = "nsteth"
 	NativeTokenSOL NSTToken = "nstsol"
+	NativeTokenBSC          = "nstbsc"
 
 	DefaultSlotsPerEpoch = uint64(32)
 )
@@ -477,11 +484,15 @@ var (
 	NSTTokens = map[NSTToken]struct{}{
 		NativeTokenETH: {},
 		NativeTokenSOL: {},
+		NativeTokenBSC: {},
 	}
+	// token -> assetID
 	NSTAssetIDMap = make(map[NSTToken]string)
-	NSTSourceMap  = map[NSTToken]string{
+	// token -> suource
+	NSTSourceMap = map[NSTToken]string{
 		NativeTokenETH: BeaconChain,
 		NativeTokenSOL: Solana,
+		NativeTokenBSC: Bsc,
 	}
 
 	Logger feedertypes.LoggerInf
@@ -962,7 +973,7 @@ func (s *Stakers) tryGrowVersionsFromCache(version, withdrawVersion uint64, upda
 	return nil
 }
 
-// GrowVersionsFromCacheByDeposit grows the staker infos from the cache to a specific version.
+// GrowVersionsFromCacheByDepositWithdraw grows the staker infos from the cache to a specific version.
 func (s *Stakers) GrowVersionsFromCacheByDepositWithdraw(version, withdrawVersion uint64) error {
 	if version < 1 {
 		return fmt.Errorf("version is less than 1, version:%d", version)

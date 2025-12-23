@@ -190,7 +190,8 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 			continue
 		}
 
-		if fetchertypes.NSTToken(feeder.token) == fetchertypes.NativeTokenETH {
+		switch fetchertypes.NSTToken(feeder.token) {
+		case fetchertypes.NativeTokenETH:
 			// beaconchain use hex validators index instead of validator pubkey
 			// TODO: do this conversion on imuachain side
 			for _, sInfo := range stakerInfos {
@@ -204,7 +205,26 @@ func ResetNSTStakers(ec imuaclient.ImuaClientInf, assetID string, logger feedert
 					}
 				}
 			}
+		// the ValidatorPubkey fieled used for the capsule address of bsc native restaking token, the string is jus the hex format of address
+		case fetchertypes.NativeTokenBSC:
+		default:
 		}
+
+		//		if fetchertypes.NSTToken(feeder.token) == fetchertypes.NativeTokenETH {
+		//			// beaconchain use hex validators index instead of validator pubkey
+		//			// TODO: do this conversion on imuachain side
+		//			for _, sInfo := range stakerInfos {
+		//				for i, validator := range sInfo.ValidatorList {
+		//					// TODO: error handling
+		//					validatorIdx, _ := fetchertypes.ConvertHexToIntStr(validator.ValidatorPubkey)
+		//					sInfo.ValidatorList[i] = &oracletypes.ValidatorDeposit{
+		//						ValidatorPubkey: validatorIdx,
+		//						Version:         validator.Version,
+		//						DepositAmount:   validator.DepositAmount,
+		//					}
+		//				}
+		//			}
+		//		}
 		if err := feeder.stakers.Reset(stakerInfos, version, all); err != nil {
 			logger.Error("failed to update stakers for native-restaking-token", "feederID", feeder.feederID, "token", feeder.token, "error", err)
 			count++

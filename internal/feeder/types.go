@@ -106,11 +106,10 @@ func (lp *localPrice) updatePrice(p *updatePrice, twoPhases bool) (string, error
 	updatedPrice := *(p.price)
 	if twoPhases {
 		rootHash, err := base64.StdEncoding.DecodeString(p.price.Price)
-		rootHash = rootHash[:32]
 		if err != nil {
 			return "", fmt.Errorf("failed to parse rootHash from base64 price-string, price:%v, error:%w", p.price, err)
 		}
-		updatedPrice.Price = string(rootHash)
+		updatedPrice.Price = string(rootHash[:32])
 	}
 	lp.price = updatedPrice
 	lp.height = p.txHeight

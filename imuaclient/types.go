@@ -379,6 +379,7 @@ func (s *SubscribeResult) getEventNSTStakers() (EventNSTStakers, error) {
 		if len(parsed) != 7 {
 			return nil, fmt.Errorf("failed to parse nstChange: expected 7 parts but got %d, nstChange: %s", len(parsed), nstChange)
 		}
+		// TODO: this should accept either 'deposit' or 'withdraw'
 		if parsed[0] != "deposit" {
 			return nil, fmt.Errorf("failed to parse nstChange: expected 'deposit' but got %s", parsed[0])
 		}

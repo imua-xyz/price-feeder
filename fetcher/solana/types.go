@@ -4,23 +4,25 @@ import (
 	"fmt"
 	"strings"
 
-	nsttypes "github.com/imua-xyz/price-feeder/fetcher/nst"
+	nsttypes "github.com/imua-xyz/price-feeder/fetcher/nst/types"
 	"github.com/imua-xyz/price-feeder/fetcher/types"
+
+	// 	"github.com/imua-xyz/price-feeder/fetcher/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
 type source nsttypes.Source
 
-func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version, withdrawVersion uint64) {
-	s.Stakers.Locker.Lock()
-	s.Stakers.SInfos = sInfos
-	s.Stakers.Version = version
-	s.Stakers.WithdrawVersion = withdrawVersion
-	s.Stakers.Locker.Unlock()
-}
+// func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version, withdrawVersion uint64) {
+// 	s.Stakers.Locker.Lock()
+// 	s.Stakers.SInfos = sInfos
+// 	s.Stakers.Version = version
+// 	s.Stakers.WithdrawVersion = withdrawVersion
+// 	s.Stakers.Locker.Unlock()
+// }
 
-var _ fetchertypes.SourceNSTInf = &source{}
+// var _ fetchertypes.SourceNSTInf = &source{}
 
 const (
 	envConf   = "oracle_env_solana.yaml"
@@ -33,24 +35,24 @@ var (
 )
 
 func init() {
-	types.SourceInitializers[types.Solana] = initSolana
+	fetchertypes.SourceInitializers[fetchertypes.Solana] = initSolana
 }
 
-func initSolana(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, error) {
+func initSolana(cfgPath string, l feedertypes.LoggerInf) (fetchertypes.SourceInf, error) {
 	if logger = l; logger == nil {
 		if logger = feedertypes.GetLogger("fetcher_solana"); logger == nil {
 			return nil, feedertypes.ErrInitFail.Wrap("logger is not initialized")
 		}
 	}
 	// init from config file
-	cfg, err := nsttypes.ParseConfig(cfgPath, envConf)
+	cfg, err := nsttypes.ParseConfig[nsttypes.Config](cfgPath, envConf)
 	if err != nil {
 		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse config, error:%v", err))
 	}
 	urlEndpoint = cfg.URL
-	if err != nil {
-		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse url:%s, error:%v", cfg.URL, err))
-	}
+	//	if err != nil {
+	//		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse url:%s, error:%v", cfg.URL, err))
+	//	}
 
 	// parse nstID by splitting it with "_'"
 	nstID := strings.Split(cfg.NSTID, "_")
@@ -60,11 +62,12 @@ func initSolana(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, error
 
 	// init first to get a fixed pointer for 'fetch' to refer to
 	defaultSource = &source{}
-	*defaultSource = source{
-		Logger:  logger,
-		Source:  types.NewSource(logger, types.Solana, defaultSource.fetch, cfgPath, defaultSource.reload),
-		Stakers: types.NewStakers(),
-	}
+	*defaultSource = source(*(nsttypes.NewSource(logger, fetchertypes.Solana, defaultSource.fetch, cfgPath, defaultSource.reload)))
+	//	*defaultSource = source{
+	//		Logger:  logger,
+	//		Source:  types.NewSource(logger, types.Solana, defaultSource.fetch, cfgPath, defaultSource.reload),
+	//		Stakers: types.NewStakers(),
+	//	}
 
 	types.SetNativeAssetID(fetchertypes.NativeTokenSOL, cfg.NSTID)
 

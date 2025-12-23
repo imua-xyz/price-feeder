@@ -6,16 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path"
 	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/imua-xyz/price-feeder/fetcher/types"
+	nsttypes "github.com/imua-xyz/price-feeder/fetcher/nst/types"
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
-	"gopkg.in/yaml.v2"
 )
 
 /**
@@ -34,12 +31,18 @@ limitation of imuachainv1:
 **/
 
 type source struct {
-	logger  feedertypes.LoggerInf
-	stakers *fetchertypes.Stakers
-	*types.Source
+	*nsttypes.Source
 	ethClient        *ethclient.Client
-	bootstrapAddress string // the address of the bootstrap contract, used to get capsule address for stakers
+	bootstrapAddress string
 }
+
+// type source struct {
+// 	logger  feedertypes.LoggerInf
+// 	stakers *fetchertypes.Stakers
+// 	*fetchertypes.Source
+// 	ethClient        *ethclient.Client
+// 	bootstrapAddress string // the address of the bootstrap contract, used to get capsule address for stakers
+// }
 
 type config struct {
 	URLs struct {
@@ -56,13 +59,13 @@ type ResultConfig struct {
 	} `json:"data"`
 }
 
-func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version uint64, withdrawVersion uint64) {
-	s.stakers.Locker.Lock()
-	s.stakers.SInfos = sInfos
-	s.stakers.Version = version
-	s.stakers.WithdrawVersion = withdrawVersion
-	s.stakers.Locker.Unlock()
-}
+// func (s *source) SetNSTStakers(sInfos fetchertypes.StakerInfos, version, withdrawVersion uint64) {
+// 	s.Stakers.Locker.Lock()
+// 	s.Stakers.SInfos = sInfos
+// 	s.Stakers.Version = version
+// 	s.Stakers.WithdrawVersion = withdrawVersion
+// 	s.Stakers.Locker.Unlock()
+// }
 
 const (
 	envConf               = "oracle_env_beaconchain.yaml"
@@ -76,17 +79,18 @@ var (
 )
 
 func init() {
-	types.SourceInitializers[types.BeaconChain] = initBeaconchain
+	fetchertypes.SourceInitializers[fetchertypes.BeaconChain] = initBeaconchain
 }
 
-func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, error) {
+func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (fetchertypes.SourceInf, error) {
 	if logger = l; logger == nil {
 		if logger = feedertypes.GetLogger("fetcher_beaconchain"); logger == nil {
 			return nil, feedertypes.ErrInitFail.Wrap("logger is not initialized")
 		}
 	}
 	// init from config file
-	cfg, err := parseConfig(cfgPath)
+	// cfg, err := parseConfig(cfgPath)
+	cfg, err := nsttypes.ParseConfig[config](cfgPath, envConf)
 	if err != nil {
 		// logger.Error("fail to parse config", "error", err, "path", cfgPath)
 		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("failed to parse config, error:%v", err))
@@ -109,7 +113,7 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 	}
 
 	// set slotsPerEpoch
-	if slotsPerEpochKnown, ok := types.ChainToSlotsPerEpoch[lzID]; ok {
+	if slotsPerEpochKnown, ok := fetchertypes.ChainToSlotsPerEpoch[lzID]; ok {
 		slotsPerEpoch = slotsPerEpochKnown
 	} else {
 		// else, we need the slotsPerEpoch from beaconchain endpoint
@@ -139,34 +143,32 @@ func initBeaconchain(cfgPath string, l feedertypes.LoggerInf) (types.SourceInf, 
 	if cfg.Bootstrap == "" {
 		return nil, feedertypes.ErrInitFail.Wrap("bootstrap address is not set")
 	}
-	if !types.IsContractAddress(cfg.Bootstrap, client, logger) {
+	if !fetchertypes.IsContractAddress(cfg.Bootstrap, client, logger) {
 		return nil, feedertypes.ErrInitFail.Wrap(fmt.Sprintf("bootstrap address is not a contract address: %s", cfg.Bootstrap))
 	}
 	// init first to get a fixed pointer for 'fetch' to refer to
 	defaultSource = &source{}
 
 	*defaultSource = source{
-		logger:           logger,
-		Source:           types.NewSource(logger, types.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
-		stakers:          types.NewStakers(),
+		Source:           nsttypes.NewSource(logger, fetchertypes.BeaconChain, defaultSource.fetch, cfgPath, defaultSource.reload),
 		ethClient:        client,
 		bootstrapAddress: cfg.Bootstrap,
 	}
 
 	// update nst assetID to be consistent with imuad. for beaconchain it's about different lzID
-	types.SetNativeAssetID(fetchertypes.NativeTokenETH, cfg.NSTID)
+	fetchertypes.SetNativeAssetID(fetchertypes.NativeTokenETH, cfg.NSTID)
 
 	return defaultSource, nil
 }
 
-func parseConfig(confPath string) (config, error) {
-	yamlFile, err := os.Open(path.Join(confPath, envConf))
-	if err != nil {
-		return config{}, err
-	}
-	cfg := config{}
-	if err = yaml.NewDecoder(yamlFile).Decode(&cfg); err != nil {
-		return config{}, err
-	}
-	return cfg, nil
-}
+// func parseConfig(confPath string) (config, error) {
+// 	yamlFile, err := os.Open(path.Join(confPath, envConf))
+// 	if err != nil {
+// 		return config{}, err
+// 	}
+// 	cfg := config{}
+// 	if err = yaml.NewDecoder(yamlFile).Decode(&cfg); err != nil {
+// 		return config{}, err
+// 	}
+// 	return cfg, nil
+// }

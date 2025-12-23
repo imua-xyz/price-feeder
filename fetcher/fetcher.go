@@ -235,10 +235,12 @@ func (f *Fetcher) Start() error {
 					s, ok := f.sources[req.sourceName]
 					if !ok {
 						f.logger.Error("failed to set NST stakers for a nonexistent source", "source", req.sourceName)
+						continue
 					}
 					sNST, ok := s.(types.SourceNSTInf)
 					if !ok {
 						f.logger.Error("failed to set NST stakers for a source which doesn't support NST stakers", "source", req.sourceName)
+						continue
 					}
 					sNST.SetNSTStakers(req.sInfos, req.version, req.withdrawVersion)
 				}

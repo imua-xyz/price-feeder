@@ -36,7 +36,7 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 
 	// epoch not updated, just return without fetching since effective-balance has not changed
 	if epoch <= finalizedEpoch && version <= finalizedVersion {
-		s.Logger.Info("fetch active stake from solana, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)
+		s.Logger().Info("fetch active stake from solana, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)
 		return &types.PriceInfo{
 			Price: string(latestChangesBytes),
 			// combine epoch and version as roundID in priceInfo
@@ -44,20 +44,20 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 		}, nil
 	}
 
-	s.Logger.Info("fetch active stake from solana", "stakerList_length", len(sInfos), "epoch", epoch, "version", version)
-	changedStakerBalances, err := fetchStakerBalanceChanges(sInfos, startSlot, endSlot, s.Logger)
+	s.Logger().Info("fetch active stake from solana", "stakerList_length", len(sInfos), "epoch", epoch, "version", version)
+	changedStakerBalances, err := fetchStakerBalanceChanges(sInfos, startSlot, endSlot, s.Logger())
 	for err != nil {
 		if !errors.Is(err, errExceedsMaxSlot) {
 			return nil, err
 		}
-		s.Logger.Info("fetch active stake from solana, epoch increased during fetching, try latestEpoch, ", "prevEpoch", epoch, "version", version)
+		s.Logger().Info("fetch active stake from solana, epoch increased during fetching, try latestEpoch, ", "prevEpoch", epoch, "version", version)
 		epoch, startSlot, endSlot, _, err = getFinalizedEpoch()
 		if err != nil {
 			return nil, fmt.Errorf("fail to get finalized epoch from solana, error:%w", err)
 		}
 		// this should not happen
 		if epoch <= finalizedEpoch && version <= finalizedVersion {
-			s.Logger.Info("fetch active stake from solana, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)
+			s.Logger().Info("fetch active stake from solana, no change in epoch or version, return latestChangesBytes", "epoch", epoch, "version", version)
 			return &types.PriceInfo{
 				Price: string(latestChangesBytes),
 				// combine epoch and version as roundID in priceInfo
@@ -65,12 +65,12 @@ func (s *source) fetch(token string) (*types.PriceInfo, error) {
 			}, nil
 		}
 
-		s.Logger.Info("retry fetching active stake from solana", "stakerList_length", len(sInfos), "epoch", epoch, "version", version)
-		changedStakerBalances, err = fetchStakerBalanceChanges(sInfos, startSlot, endSlot, s.Logger)
+		s.Logger().Info("retry fetching active stake from solana", "stakerList_length", len(sInfos), "epoch", epoch, "version", version)
+		changedStakerBalances, err = fetchStakerBalanceChanges(sInfos, startSlot, endSlot, s.Logger())
 	}
 
 	if len(changedStakerBalances) > 0 {
-		s.Logger.Info("fetch active stake from solana, some active stake of validators have changed")
+		s.Logger().Info("fetch active stake from solana, some active stake of validators have changed")
 		sort.Slice(changedStakerBalances, func(i, j int) bool {
 			return changedStakerBalances[i].StakerIndex < changedStakerBalances[j].StakerIndex
 		})
