@@ -456,6 +456,7 @@ const (
 	BaseCurrency = "usdt"
 	BeaconChain  = "beaconchain"
 	Solana       = "solana"
+	XChain       = "xchain"
 
 	NativeTokenETH NSTToken = "nsteth"
 	NativeTokenSOL NSTToken = "nstsol"

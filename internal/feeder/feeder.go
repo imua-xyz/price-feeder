@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/imua-xyz/price-feeder/fetcher"
+	"github.com/imua-xyz/price-feeder/fetcher/bridge"
 	"github.com/imua-xyz/price-feeder/imuaclient"
 	itypes "github.com/imua-xyz/price-feeder/internal/types"
 	"github.com/imua-xyz/price-feeder/types"
@@ -17,6 +18,8 @@ import (
 	fetchertypes "github.com/imua-xyz/price-feeder/fetcher/types"
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
+
+const xchainIDPrefix = "xchain_"
 
 // DefaultRetryConfig provides default retry settings
 var DefaultRetryConfig = itypes.RetryConfig{
@@ -63,10 +66,22 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 			continue
 		}
 		tokenName := strings.ToLower(oracleP.Tokens[feeder.TokenID].Name)
+		assetID := oracleP.Tokens[feeder.TokenID].AssetID
 		decimal := oracleP.Tokens[feeder.TokenID].Decimal
 		sourceName := fetchertypes.Chainlink
 		// TODO(leonz): unify with Rule check
-		if fetchertypes.IsNSTToken(tokenName) {
+		xchainToken := ""
+		for _, id := range strings.Split(assetID, ",") {
+			id = strings.ToLower(strings.TrimSpace(id))
+			if strings.HasPrefix(id, xchainIDPrefix) {
+				xchainToken = id
+				break
+			}
+		}
+		if xchainToken != "" {
+			sourceName = fetchertypes.XChain
+			tokenName = xchainToken
+		} else if fetchertypes.IsNSTToken(tokenName) {
 			nstToken := fetchertypes.NSTToken(tokenName)
 			if sourceName = fetchertypes.GetNSTSource(nstToken); len(sourceName) == 0 {
 				panic(fmt.Sprintf("source of nst:%s is not set", tokenName))
@@ -86,6 +101,18 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 		feeder := feeders.feederMap[feederID]
 		if err := ResetNSTStakers(ecClient, assetID, logger, feeder, true); err != nil {
 			panic(fmt.Sprintf("failed to init nst stakers, assetID:%s, error:%s", assetID, err.Error()))
+		}
+	}
+
+	// Initialize bridge manager for outbound checkpoint signing and delivery.
+	var bridgeMgr *bridge.BridgeManager
+	if conf.Bridge.Enabled {
+		var err error
+		bridgeMgr, err = bridge.NewBridgeManager(conf.Bridge, logger, conf.Imua.Rpc)
+		if err != nil {
+			logger.Error("failed to initialize bridge manager, bridge features disabled", "error", err)
+		} else {
+			logger.Info("bridge manager initialized", "chains", len(conf.Bridge.Chains))
 		}
 	}
 
@@ -146,6 +173,11 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 					}
 				}
 				feeders.Trigger(e.Height(), e.FeederIDs())
+
+				// Bridge: check for pending checkpoints to sign and finalized ones to deliver.
+				if bridgeMgr != nil {
+					bridgeMgr.OnNewBlock(e.Height())
+				}
 			case *imuaclient.EventUpdatePrice:
 				finalPrices := make([]*finalPrice, 0, len(e.Prices()))
 				var syncPriceInfo string

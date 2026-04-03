@@ -71,7 +71,26 @@ type Config struct {
 	Status struct {
 		Grpc int `mapstructure:"grpc"`
 	} `mapstructure:"status"`
-	Log LogConf `mapstructure:"log"`
+	Log    LogConf    `mapstructure:"log"`
+	Bridge BridgeConf `mapstructure:"bridge"`
+}
+
+// BridgeConf holds configuration for the oracle bridge outbound functionality.
+type BridgeConf struct {
+	// Enabled controls whether bridge checkpoint signing and delivery is active.
+	Enabled bool `mapstructure:"enabled"`
+	// ECDSAKeyHex is the hex-encoded secp256k1 private key for checkpoint signing and tx submission.
+	// This should be the operator's account key (same key that derives their EVM address).
+	ECDSAKeyHex string `mapstructure:"ecdsa_key_hex"`
+	// Chains is the list of destination client chains for outbound delivery.
+	Chains []BridgeChainConf `mapstructure:"chains"`
+}
+
+// BridgeChainConf holds configuration for a single destination chain.
+type BridgeChainConf struct {
+	DstChainID     uint64 `mapstructure:"dst_chain_id"`
+	RPC            string `mapstructure:"rpc"`
+	BridgeVerifier string `mapstructure:"bridge_verifier"` // hex address of BridgeVerifier contract
 }
 
 type LoggerInf log.Logger
