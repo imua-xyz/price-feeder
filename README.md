@@ -81,6 +81,23 @@ nstid:
   !!str 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee_0x65
 bootstrap: !!str 0x38674073a3713dd2C46892f1d2C5Dadc5Bb14172
 ```
+- oracle_env_xchain.yaml (path/to/sources/config/oracle_env_xchain.yaml)
+```
+abi_path: ./fetcher/xchain/xchain_gateway_abi.json
+event_name: XChainMessage
+tokens:
+  xchain_101:
+    rpc: !!str https://clientchain.example/rpc
+    gateway: !!str 0xYourClientChainGateway
+    src_chain_id: 101
+    start_block: 0
+    start_nonce: 1
+    start_batch_seq: 1
+    confirmations: 5
+    max_messages: 200
+    max_bytes: 2097152
+    max_blocks: 2000
+```
 ## Debug
 We provide command-line tools for sending price quote transactions manually through an interactive interface
 ### send tx immedidately

@@ -672,7 +672,7 @@ func (f *feeder) start() {
 						}
 						if f.IsTwoPhases() {
 							_, rootHash := f.AddRawData(roundID, []byte(price.Price), f.twoPhasesPieceSize)
-							if len(f.lastPrice.price.Price) > 0 {
+							if len(f.lastPrice.price.Price) > 0 && fetchertypes.IsNSTToken(f.token) {
 								withdrawVersion, err := strconv.ParseUint(strings.Split(price.RoundID, "|")[2], 10, 64)
 								if err != nil {
 									f.logger.Error("failed to parse withdrawVersion from price.RoundID", "roundID", roundID, "delta", delta, "price", price, "error", err)

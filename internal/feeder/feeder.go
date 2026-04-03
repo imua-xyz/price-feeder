@@ -18,6 +18,8 @@ import (
 	feedertypes "github.com/imua-xyz/price-feeder/types"
 )
 
+const xchainIDPrefix = "xchain_"
+
 // DefaultRetryConfig provides default retry settings
 var DefaultRetryConfig = itypes.RetryConfig{
 	MaxAttempts: 43200, // defaultMaxRetry
@@ -63,10 +65,22 @@ func RunPriceFeeder(conf *feedertypes.Config, logger feedertypes.LoggerInf, mnem
 			continue
 		}
 		tokenName := strings.ToLower(oracleP.Tokens[feeder.TokenID].Name)
+		assetID := oracleP.Tokens[feeder.TokenID].AssetID
 		decimal := oracleP.Tokens[feeder.TokenID].Decimal
 		sourceName := fetchertypes.Chainlink
 		// TODO(leonz): unify with Rule check
-		if fetchertypes.IsNSTToken(tokenName) {
+		xchainToken := ""
+		for _, id := range strings.Split(assetID, ",") {
+			id = strings.ToLower(strings.TrimSpace(id))
+			if strings.HasPrefix(id, xchainIDPrefix) {
+				xchainToken = id
+				break
+			}
+		}
+		if xchainToken != "" {
+			sourceName = fetchertypes.XChain
+			tokenName = xchainToken
+		} else if fetchertypes.IsNSTToken(tokenName) {
 			nstToken := fetchertypes.NSTToken(tokenName)
 			if sourceName = fetchertypes.GetNSTSource(nstToken); len(sourceName) == 0 {
 				panic(fmt.Sprintf("source of nst:%s is not set", tokenName))
